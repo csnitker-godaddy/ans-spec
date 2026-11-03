@@ -27,7 +27,7 @@ mandatory in execution once a kind is enabled.
 
 **Status meanings** (ANS-0 §10.1):
 
-- **Active** — wired, tested, sealing real proofs.
+- **Active** — implemented, tested, sealing real proofs.
 - **Postponed** — the flow is the design of record and de-risked, but disabled until its external
   plumbing is enabled; the kind returns `IDENTIFIER_KIND_UNSUPPORTED`.
 - **Deferred (sketch)** — intended shape only; ships when its resolver, tests, and external

@@ -99,9 +99,10 @@ lists.
 
 ## 7. Coexistence and presentation safety
 
-- **CNAME at the apex** blocks the HTTPS RR (RFC 1034 §3.6.2), which is why it is `Required=false`;
-  operators needing both a CNAME and an apex HTTPS RR use CNAME flattening at the provider. The
-  `_ans` child label is a separate DNS node and is unaffected by a CNAME at the apex.
+- **CNAME at the apex** blocks the HTTPS RR (RFC 1034 §3.6.2), which is why it is `Required=false`.
+  Operators choosing to publish the HTTPS RR while retaining aliasing behavior need an arrangement
+  without a conflicting CNAME at `agentHost`; CNAME flattening is one option (ANS-3 §8.3). The `_ans`
+  child label is a separate DNS node and is unaffected by a CNAME at the apex.
 - **Sibling agent-discovery drafts** publish under different underscored leaves (`_agents`,
   `_agent`, …); `_ans` does not collide with them (ANS-3 §8.4).
 - **Presentation**: `_ans` TXT values are free-form character-strings; this profile has none of the
@@ -111,7 +112,7 @@ lists.
 
 This profile defines no codes of its own. Endpoint and URL validation surface the core
 `INVALID_ENDPOINT`, `ENDPOINT_HOST_MISMATCH`, `DUPLICATE_ENDPOINT`, and `DUPLICATE_PROTOCOL`
-validation errors (ANS-1); a `discoveryProfiles` element naming no wired profile is rejected with
+validation errors (ANS-1); a `discoveryProfiles` element naming no supported profile is rejected with
 `INVALID_DISCOVERY_PROFILE` (ANS-3 §6.4). A verify-dns mismatch keeps the registration in
 `PENDING_DNS` and the operator reconciles by publishing the announced record (ANS-3 §4).
 

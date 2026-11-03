@@ -89,7 +89,7 @@ SVCB row.
 
 | Record | Required | Note |
 | --- | --- | --- |
-| `{fqdn}` SVCB | **Yes**, alone; **No** in the `ANS_TXT` union | The profile emits `Required=true`; the walker flips it to `false` when `ANS_TXT` is also resolved, so the `_ans` TXT carries the required signal in the transition union (ANS-3 §6.4) |
+| `{fqdn}` SVCB | **Yes**, alone; **No** in the `ANS_TXT` union | `Required=true` when `ANS_DNSAID` is the sole resolved profile; `Required=false` when `ANS_TXT` is also resolved, so the `_ans` TXT carries the required signal in the transition union (ANS-3 §6.4) |
 | `_ans-badge` TXT (family) | Yes | ANS-3 §6.3 |
 | `_{port}._tcp.{fqdn}` TLSA (family) | No | ANS-3 §6.3; verify-side enforces a match only when the zone is DNSSEC-validated |
 
@@ -114,8 +114,9 @@ version the AHP removes the SVCB and family records the RA's revocation response
 
 ## 7. Coexistence and presentation safety
 
-- **CNAME at the apex** blocks the SVCB row (RFC 1034 §3.6.2). Operators needing both a CNAME (a CDN
-  front-end) and the SVCB row MUST use CNAME flattening at the provider.
+- **CNAME at the apex** blocks the SVCB row (RFC 1034 §3.6.2). Operators requiring aliasing behavior
+  MUST choose a DNS arrangement that preserves the required SVCB record without publishing a
+  conflicting CNAME at `agentHost`. CNAME flattening is one possible arrangement (ANS-3 §8.3).
 - **RFC 9460 §8 unknown-key handling** — generic SVCB clients and sibling agent-discovery drafts
   ignore SvcParams they do not recognize rather than fail closed, so ANS SvcParams coexist with
   others on the same row (ANS-3 §8.4).
@@ -123,9 +124,9 @@ version the AHP removes the SVCB and family records the RA's revocation response
   ≤2048 characters, and free of every byte the SVCB presentation format escapes (whitespace, double
   quote, backslash, semicolon, and non-printable ASCII) in **both** the raw URL (which feeds `cap`)
   and its percent-decoded path (which feeds `well-known`). A violation is rejected with
-  `INVALID_ENDPOINT`. This keeps the published value byte-identical to what a lookup verifier
-  observes when it splits the record on whitespace and the first `=`, so a stray byte never injects
-  a bogus SvcParam into the producer-signed attestation or strands the agent in `PENDING_DNS`.
+  `INVALID_ENDPOINT`. The published SvcParam values remain byte-identical to the expected values,
+  so a stray byte cannot inject a bogus SvcParam into the producer-signed attestation or strand the
+  agent in `PENDING_DNS`.
 - **Private-Use range caveat** — collision with another experiment on the same code points is
   intrinsic to Private Use but bounded to denial-of-verification (a false negative; never a false
   accept, §5). If these params are IANA-registered later, switching the presentation form back to
@@ -137,7 +138,7 @@ version the AHP removes the SVCB and family records the RA's revocation response
 | Code | Meaning |
 | --- | --- |
 | `INVALID_ENDPOINT` | `metadataUrl` not https / over 2048 chars / carrying SVCB-unsafe bytes (raw or decoded path); `metadataHash` not `SHA256:<64 hex>`; `metadataHash` supplied without `metadataUrl`; `agentUrl` port outside 1–65535 |
-| `INVALID_DISCOVERY_PROFILE` | (core) a `discoveryProfiles` element naming no wired profile (ANS-3 §6.4) |
+| `INVALID_DISCOVERY_PROFILE` | (core) a `discoveryProfiles` element naming no supported profile (ANS-3 §6.4) |
 
 A verify-dns mismatch keeps the registration in `PENDING_DNS` and the operator reconciles by
 publishing the announced record (ANS-3 §4); it is not a distinct error code.
@@ -150,7 +151,7 @@ signal when it is the sole resolved profile (§4). An RA MUST emit the SVCB row 
 specifies — `keyNNNNN` Private-Use presentation, never the named DNS-AID forms. The V1 lane never
 consults the default and stays pinned to `ANS_TXT`.
 
-**Status: Active.** Wired and tested, emitting real SVCB rows the RA verifies at verify-dns.
+**Status: Active.** Implemented and tested, emitting real SVCB rows the RA verifies at verify-dns.
 
 ## 10. Object schemas (worked example)
 

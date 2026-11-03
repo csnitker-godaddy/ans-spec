@@ -3,13 +3,13 @@ info:
   title: ANS Transparency Log API
   version: "2.0.0"
   description: |
-    OpenAPI contract for the ANS Transparency Log (`ans-tl`). Paths
-    match the reference TL's swagger byte-for-byte — `/v1/agents/*`,
-    `/v1/log/*`, `/v1/internal/*`, C2SP tlog-tiles at root
-    (`/checkpoint`, `/root-keys`, `/tile/*`), and
-    `/internal/v1/producer-keys/*` for admin CRUD.
+    OpenAPI contract for the ANS Transparency Log. This document is
+    the contract; a conformant TL exposes these surfaces —
+    `/v1/agents/*`, `/v1/log/*`, `/v1/internal/*`, C2SP tlog-tiles at
+    root (`/checkpoint`, `/root-keys`, `/tile/*`), and
+    `/internal/v1/producer-keys/*` for producer-key administration.
 
-    Behavioral parity with the reference TL:
+    Contract notes:
 
       - Event envelope is the V2 shape — nested `{payload:{logId,
         producer:{event, keyId, signature}}, schemaVersion:"V2",
@@ -20,14 +20,12 @@ info:
         verifier backwards compatibility (never emitted).
       - Receipts are SCITT COSE_Sign1 (RFC 8152 tag 18) with VDS 1
         (RFC 9162_SHA256) and the VDP inclusion proof in the
-        unprotected header (label 396). See
-        `internal/tl/receipt/constants.go` for the concrete labels.
-      - `/root-keys` emits the sumdb-note verification format
-        byte-for-byte compatible with the reference.
-      - `/internal/v1/producer-keys` admin routes match the reference
-        swagger.yaml snake_case DTOs; the only ans-only extension is
-        `GET /internal/v1/producer-keys/{key_id}` (reference doesn't
-        expose single-record lookup).
+        unprotected header (label 396); the concrete labels are
+        given in ANS-6 §4.3.
+      - `/root-keys` emits the C2SP signed-note verifier-line format.
+      - `/internal/v1/producer-keys` admin routes use snake_case
+        DTOs, including single-record lookup at
+        `GET /internal/v1/producer-keys/{key_id}`.
 
 servers:
   - url: http://localhost:18081
@@ -65,9 +63,9 @@ paths:
       description: |
         Accepts a JCS-canonicalized producer-event body signed with a
         detached JWS (`X-Signature` header). Successful appends return
-        the Tessera-assigned leaf index and hash; duplicate submissions
+        the assigned leaf index and hash; duplicate submissions
         (same SHA-256(inner event JCS)) return 200 with the original
-        leaf so outbox retries are idempotent.
+        leaf so retries are idempotent and never append a second leaf.
       operationId: appendEvent
       parameters:
         - name: X-Signature
@@ -93,8 +91,7 @@ paths:
             Event logged. On a duplicate submission (identical
             inner-event JCS hash) the response carries
             `duplicate: true` + the pre-existing leaf so retries are
-            idempotent. Matches the reference TL's status-code and
-            body shape.
+            idempotent.
           content:
             application/json:
               schema:
@@ -274,8 +271,8 @@ paths:
 
         The identity-family ingest lane. Identical wire contract to
         `/v1/internal/agents/event` — JCS-canonicalized inner event
-        body + detached-JWS `X-Signature`, same producer-key trust
-        store, same dedup — with the identity payload schema (keyed
+        body + detached-JWS `X-Signature`, same producer-key registry,
+        same duplicate handling — with the identity payload schema (keyed
         by `identityId`, closed `IDENTITY_*` eventType enum). The
         closed enums are the cross-lane guard: an `AGENT_*` body on
         this route (or an `IDENTITY_*` body on an agent route) fails
@@ -428,8 +425,8 @@ paths:
       tags: [Transparency Log]
       summary: Agents currently linked to the identity (reverse join)
       description: |
-        Computed at query time from the link events' agent index
-        under the visibility predicate: every agent whose latest
+        Derived from the identity's sealed link events under the
+        visibility predicate: every agent whose latest
         link/unlink fact naming it is LINKED and whose own computed
         status is live, decorated with that status. Paginated — the
         reverse join is the genuinely unbounded read (an identity
@@ -475,10 +472,10 @@ paths:
       description: |
         The same entries as the agent badge's `identities[]` field,
         served alone and paginated — the overflow target for the
-        badge's embedded safety cap. Computed at read time under the
-        visibility predicate (link LINKED ∧ agent live; a REVOKED
-        identity stays visible with no keys) — never stored on, or
-        sealed into, the agent.
+        badge's embedded safety cap. Derived from the identity's
+        sealed link events under the visibility predicate (link LINKED
+        ∧ agent live; a REVOKED identity stays visible with no keys) —
+        never sealed into the agent.
       operationId: getAgentIdentities
       parameters:
         - $ref: '#/components/parameters/AgentIdPath'
@@ -513,8 +510,8 @@ paths:
       summary: Link/unlink events that ever named this agent
       description: |
         Past and present associations, in the STANDARD audit envelope
-        (each record a TransparencyLog) — no bespoke format. Filtered
-        through the link events' agent index; the records themselves
+        (each record a TransparencyLog) — no bespoke format. Selects
+        the link events naming this agent; the records themselves
         live on the identity streams. The agent's own `/audit` stays
         purely AGENT_*. This endpoint is a droppable convenience: the
         same view derives from the identity audits or the raw entry
@@ -570,12 +567,10 @@ paths:
       tags: [Tlog Tiles]
       summary: Latest signed checkpoint (sumdb note format)
       description: |
-        Signed checkpoint note produced by Tessera using the
-        ed25519 signer in `note.pub`. Format matches
-        `golang.org/x/mod/sumdb/note` — clients verify with the
-        key advertised at `/root-keys` (or pulled from the
-        `note.pub` file the operator publishes). Matches C2SP
-        tlog-tiles spec exactly.
+        C2SP signed checkpoint note (tlog-checkpoint), signed with
+        the TL's ed25519 signer. Clients verify with the key
+        advertised at `/root-keys`. Matches the C2SP tlog-tiles
+        spec exactly.
       operationId: getCheckpoint
       responses:
         '200':
@@ -593,7 +588,7 @@ paths:
         JSON-encoded view of the same checkpoint served at
         `/checkpoint` as raw note text. Exposes size, height, root
         hash (base64), origin, format, body text, and signatures —
-        one entry per signer. Reference swagger §310.
+        one entry per signer.
       operationId: getCheckpointJSON
       responses:
         '200':
@@ -608,10 +603,9 @@ paths:
       tags: [Tlog Tiles]
       summary: Paginated checkpoint history
       description: |
-        Returns checkpoints stored by the TL with optional
-        tree-size and time filters. Reference default is 10 per
-        page, DESC by tree_size; maximum 100 per page. Matches
-        reference swagger §342 byte-for-byte.
+        Returns the TL's recorded checkpoints with optional
+        tree-size and time filters. Default 10 per page, descending
+        by tree size; maximum 100 per page.
       operationId: getCheckpointHistory
       parameters:
         - name: limit
@@ -662,8 +656,7 @@ paths:
         `transparency.ans.godaddy.com/v1/log/schema/{V0,V1}`,
         served here for historical-verifier backwards compatibility.
         V2 is the shape *this* server emits on the wire (evolution
-        of V1 with unified cert arrays + typed DNS records). Matches
-        reference swagger §424.
+        of V1 with unified cert arrays + typed DNS records).
       operationId: getSchemaByVersion
       parameters:
         - name: version
@@ -692,8 +685,7 @@ paths:
       summary: Complete Merkle tile (256 hashes)
       description: |
         C2SP tlog-tiles complete tile — 256 node hashes concatenated
-        as raw bytes (no framing). Served directly from Tessera's
-        POSIX layout.
+        as raw bytes (no framing).
       operationId: getCompleteTile
       parameters:
         - name: level
@@ -788,7 +780,7 @@ paths:
           description: Entry tile not found.
 
   # ──────────────────────────────────────────────────────────────
-  # Admin: producer-key CRUD (byte-for-byte reference swagger parity)
+  # Admin: producer-key CRUD
   # ──────────────────────────────────────────────────────────────
   /internal/v1/producer-keys:
     post:
@@ -837,7 +829,7 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Keys for the RA (includes revoked rows for audit).
+          description: Keys for the RA (includes revoked keys for audit).
           content:
             application/json:
               schema:
@@ -854,11 +846,11 @@ paths:
   /internal/v1/producer-keys/{key_id}:
     get:
       tags: [Admin]
-      summary: Fetch a single producer key by ID (ans-only extension)
+      summary: Fetch a single producer key by ID
       description: |
-        Not in the reference swagger. Added as a convenience for admin
-        CLIs that already hold a key_id (e.g., after a successful
-        create) and want to read it back without listing-by-ra.
+        Convenience for admin CLIs that already hold a key_id (e.g.,
+        after a successful create) and want to read it back without
+        listing-by-ra.
       operationId: getProducerKey
       parameters:
         - name: key_id
@@ -1001,10 +993,9 @@ components:
     AppendResponse:
       type: object
       description: |
-        `logId`, `message`, and `success` match the reference TL's
-        AgentEventResponse byte-for-byte. `leafIndex`, `leafHashHex`,
-        `duplicate`, and `treeSize` are ans-specific additions that
-        expose the Merkle-tree position to callers who want to fetch a
+        `logId`, `message`, and `success` are the base response.
+        `leafIndex`, `leafHashHex`, `duplicate`, and `treeSize` expose
+        the Merkle-tree position to callers who want to fetch a
         receipt without a second round-trip.
       required: [leafIndex, leafHashHex, duplicate, treeSize]
       properties:
@@ -1047,8 +1038,9 @@ components:
         identities:
           type: array
           description: |
-            Agent badges only — the COMPUTED read-time join of the
-            agent's currently-linked verified identities, under the
+            Agent badges only — the COMPUTED view of the agent's
+            currently-linked verified identities, derived from the
+            sealed link events under the
             visibility predicate (link LINKED AND agent live). A
             REVOKED identity stays visible with identityStatus
             REVOKED and no keys[] — a verifier must see the who was
@@ -1198,8 +1190,8 @@ components:
           type: string
           format: date-time
           description: |
-            Wall-clock time at which the TL persisted the checkpoint
-            row. ans-specific field; reference clients ignore it.
+            Wall-clock time at which the TL recorded the checkpoint.
+            ANS-specific field; generic C2SP clients ignore it.
         signatures:
           type: array
           items:
@@ -1208,14 +1200,14 @@ components:
     CheckpointSignature:
       type: object
       description: |
-        One signature line on a checkpoint. Matches the reference TL's
-        CheckpointSignature wire shape byte-for-byte:
+        One signature line on a checkpoint. Wire shape:
         `signatureType` is lowercase (`c2sp` | `jws`), `keyHash` is
         the `0x`-prefixed 8-char hex of the 4-byte keyhash (matching
         `/root-keys`), `kmsKeyId` carries the opaque key identifier
         on JWS entries. `jwsHeader`, `jwsPayload`, `jwsSignature`,
         `timestamp`, and `kmsKeyId` are only populated for `jws`
-        entries. `valid` is the read-time verification result.
+        entries. `valid` reports whether the signature verifies
+        under the TL signing key.
       required: [signerName, signatureType, algorithm, rawSignature]
       properties:
         algorithm:     { type: string, example: ES256 }
@@ -1228,7 +1220,7 @@ components:
         signatureType: { type: string, enum: [c2sp, jws] }
         signerName:    { type: string }
         timestamp:     { type: string, format: date-time, description: "Timestamp claim from the JWS (jws entries only)" }
-        valid:         { type: boolean, description: "Signature verified against the TL signing key at read time." }
+        valid:         { type: boolean, description: "Whether the signature verifies against the TL signing key." }
 
     CheckpointHistoryResponse:
       type: object

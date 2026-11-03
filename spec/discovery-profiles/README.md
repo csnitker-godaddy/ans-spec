@@ -23,20 +23,20 @@ for operators whose zone-edit tooling targets `_ans.{fqdn}`; the V1 lane never c
 and is always pinned to `ANS_TXT`
 ([ANS-3 §6](../ans-3-dns-publication.md#6-discovery-profiles)). `discoveryProfiles` is **set
 semantics on the wire**: request order carries no meaning, and emission order on the wire is the
-registry's wiring order (ANS-3 §6.4), not request order. Optional to adopt; mandatory in execution
+canonical order in ANS-3 §6.4. Optional to adopt; mandatory in execution
 once a profile is enabled — the RA verifies at verify-dns exactly the record set the chosen profiles
 emit.
 
 **Status meanings** (ANS-3 §6.1):
 
-- **Active** — wired, tested, emitting real records an operator publishes and the RA verifies at
+- **Active** — implemented and tested, emitting real records an operator publishes and the RA verifies at
   verify-dns.
 - **Default / Opt-in** is the *requirement* axis, not the status: both bundled profiles are Active.
   `ANS_DNSAID` is the default set; `ANS_TXT` is Active but opt-in (the operator must name it).
-- A `discoveryProfiles` element that names no wired profile is rejected at the API boundary with
-  `INVALID_DISCOVERY_PROFILE`; a *stored* profile unknown to the running registry (e.g. a value
-  from before a rename) is skipped with a WARN, and a registration whose every requested profile is
-  unknown falls back to the default set (ANS-3 §6.4).
+- A `discoveryProfiles` element that names no supported profile is rejected at the API boundary with
+  `INVALID_DISCOVERY_PROFILE`; an unknown *stored* profile is omitted from the resolved set, and an
+  all-unknown stored set falls back to the default. Partial omission and all-unknown fallback MUST
+  be diagnosable and distinguishable to the operator (ANS-3 §6.4).
 
 ## The profile template
 
@@ -46,7 +46,7 @@ Every discovery-profile document specifies, in this order (ANS-3 §6.2):
    profile is selected (its `discoveryProfiles` ID).
 2. Record assembly — the exact value form and parameter composition, in order.
 3. Parameter sources — where each field's value comes from, and the selection rules.
-4. Required flag and TL seal — which records are required, the transition flip, and what the profile
+4. Required flag and TL seal — which records are required, the union's flags, and what the profile
    seals into `dnsRecordsProvisioned[]`.
 5. Freshness and ANS-5 monitoring.
 6. Lifecycle (version coexistence, revocation cleanup).
@@ -56,8 +56,8 @@ Every discovery-profile document specifies, in this order (ANS-3 §6.2):
 10. Object schemas — worked record examples.
 
 All ANS-family profiles share the two **family trust records** — the `_ans-badge` TXT and the
-server-cert TLSA (ANS-3 §6.3) — emitted by every profile and deduped to a single instance at the
-composition walker. A profile only ever varies the **discovery records** layered on top of that
+server-cert TLSA (ANS-3 §6.3) — present for each profile alone and deduplicated in the composed set.
+A profile only ever varies the **discovery records** layered on top of that
 shared base.
 
 ## Conformance artifacts
@@ -68,8 +68,8 @@ The `discoveryProfiles` request field and the `DiscoveryProfile` enum — the cl
 schema and `discoveryProfiles[]` field in the RA's OpenAPI document. The composed record set is
 sealed verbatim into the `AGENT_REGISTERED` attestation as `dnsRecordsProvisioned[]`; its
 field-by-field contract is
-[ANS-3 §3](../ans-3-dns-publication.md#3-record-set-and-child-label-structure). A registry/enum
-coherence check runs at RA start
-([ANS-3 §6.4](../ans-3-dns-publication.md#64-composition-ordering-dedup-and-the-required-flag-transition)):
-every wired profile MUST be a valid `DiscoveryProfile` and every valid `DiscoveryProfile` MUST be
-wired, or the server refuses to start.
+[ANS-3 §3](../ans-3-dns-publication.md#3-record-set-and-child-label-structure). Every profile permitted
+by the API MUST be supported for generation and verification, and every generated profile MUST be
+permitted by that API. The RA MUST NOT serve registration operations under an inconsistent
+configuration and MUST make inconsistencies diagnosable to its operator
+([ANS-3 §6.4](../ans-3-dns-publication.md#64-composition-ordering-dedup-and-the-required-flag-transition)).

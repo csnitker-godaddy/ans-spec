@@ -28,8 +28,8 @@ external plumbing (a vLEI verifier) is enabled, at which point the kind returns
 The LEI itself is public data; possession of it proves nothing. Control is a **legal-entity vLEI
 credential chain** terminating in a subject Authentic Chained Data Container (ACDC) whose issuee
 is an entity Autonomous Identifier (AID), plus a possession signature from that AID's key.
-`verify-control` checks, **in order** (executed by the `port.LEIControlVerifier` seam — the RA
-does not re-implement KERI):
+`verify-control` checks, **in order** (an RA MAY delegate them to an external vLEI verifier
+performing exactly these checks; it need not implement KERI itself):
 
 1. **Lexical + checksum**: 20 alphanumerics and a valid ISO 17442 mod-97 check digit, else
    `LEI_BAD_FORMAT`.
@@ -39,7 +39,7 @@ does not re-implement KERI):
    Legal Entity vLEI → the subject ACDC — verifies end to end (each ACDC's issuer signature and
    KEL anchoring check out), and the subject ACDC's `LEI` attribute equals the canonical LEI, else
    `LEI_CREDENTIAL_INVALID`. The subject **AID** and its current signing key are extracted from
-   the verified chain and **pinned** to the identity row.
+   the verified chain and **pinned** to the identity.
 4. **Possession (every proof)**: a signature over the served signing input from the pinned subject
    AID's current key, validated against the AID's KEL (key state at proof time), else
    `LEI_SIGNATURE_INVALID`.
@@ -82,10 +82,10 @@ signal.
 
 ## 7. Outbound-fetch safety
 
-vLEI verification and KEL/GLEIF resolution are performed by the `port.LEIControlVerifier`
-implementation. Any network resolution it performs (GLEIF API, KERI witnesses) MUST apply the same
-egress-hardening posture as the did:web fetcher (ANS-0 §13) — denylist, pinning, bounded I/O — and
-MUST NOT become an SSRF oracle.
+vLEI verification and KEL/GLEIF resolution are performed by whatever vLEI verifier the RA uses.
+Any network resolution it performs (GLEIF API, KERI witnesses) MUST satisfy the same egress rules
+as did:web fetches (ANS-0 §13) — denylist on the actual destination, rebind resistance, bounded
+I/O — and MUST NOT become an SSRF oracle.
 
 ## 8. Error codes
 
@@ -102,10 +102,10 @@ MUST NOT become an SSRF oracle.
 **Requirement: Optional.** A who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)):
 optional to support; mandatory in execution once enabled.
 
-**Status: Postponed (de-risked).** The flow is the design of record; the `port.LEIControlVerifier` seam is
-defined; the kind is disabled until a vLEI verifier is wired and tested. Promotion to Active
-requires: a conformant verifier implementation behind the port, the GLEIF/KEL resolution path
-egress-hardened, and the thumbprint-only seal shape fixed in `api/api-spec-tl-v2.yaml`.
+**Status: Postponed (de-risked).** The flow is the design of record; the verifier contract is §2;
+the kind is disabled until a vLEI verifier is integrated and tested. Promotion to Active
+requires: a conformant vLEI verifier performing §2's checks, the GLEIF/KEL resolution path meeting
+§7's egress rules, and the thumbprint-only seal shape fixed in `api/api-spec-tl-v2.yaml`.
 
 ## 10. Object schemas (postponed shapes)
 

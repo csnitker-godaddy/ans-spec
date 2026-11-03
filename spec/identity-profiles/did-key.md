@@ -89,7 +89,7 @@ None — `did:key` performs no network I/O at any phase. There is no SSRF surfac
 **Requirement: Optional.** A who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)):
 optional to support; mandatory in execution once enabled.
 
-**Status: Active.** Wired, tested, sealing real proofs with zero I/O.
+**Status: Active.** Implemented, tested, sealing real proofs with zero I/O.
 
 ## 10. Object schemas (worked example)
 

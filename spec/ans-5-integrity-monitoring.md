@@ -8,42 +8,50 @@ Audience: implementers building or operating the Agent Integrity Monitor (AIM) a
 
 ## 1. Scope
 
-ANS-5 specifies the contract for a verification worker that periodically checks each registered fact and produces a verification record.
+ANS-5 specifies periodic integrity checks of registered facts and the resulting verification records.
 
 ANS-5 specifies:
 
-- The `VerificationWorker` code-interface contract: given a `Registration` reference, produce a typed `VerificationRecord` with per-check results and evidence.
+- The verification-result contract: for a registration, produce attributable per-check results and evidence.
 - The verification check set: which facts the AIM verifies, what passes, what fails.
 - The verification procedure: the cryptographic-verification-path checks a verifier runs to confirm an agent.
 - The integrity-reporting principles: monitors report, the RA acts; reports are public and signed; quorum before action; evidence MUST be verifiable.
 - The transient-vs-mismatch distinction the AIM MUST observe.
 - The principal-binding verification procedures for DID_WEB, LEI, BIOMETRIC_HASH, ENS_ENSIP25, and ENS_ENSIP26 binding types.
 
-ANS-5 is **profile-agnostic and DNS-profile-agnostic by construction**. The same worker runs
+ANS-5 is **profile-agnostic and DNS-profile-agnostic by construction**. The same checks run
 across registrations regardless of anchor profile; against the `ANS_TXT` `_ans` TXT family, against
-the `ANS_DNSAID` SVCB profile, against agents with no DNS at all. It consults the relevant ANS-3
-discovery profile through the `ProfileEmitter` composition contract
+the `ANS_DNSAID` SVCB profile, against agents with no DNS at all. The AIM consults the relevant ANS-3
+discovery profile through the DNS record-generation and composition rules
 ([ANS-3 §6](ans-3-dns-publication.md#6-discovery-profiles)) for expected DNS state. **Verified
 Identities** (the *who*, [ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object)) are
 monitored on their own per-identity cadence (§4.3), independently of the agents that link them.
 
 ANS-5 does **not**:
 
-- Score, rank, or filter agents. Trust scoring is out of scope for ANS and lives in a separate `ti-*` layer set. The clean separation matters because some deployments want verification (am I being lied to?) without scoring (is this the best one?), and others want both. ANS-5's verb is **verify**. A conforming AIM MAY be composed into a larger system that also performs scoring, provided the scoring function does not influence verification outcomes.
+- Score, rank, or filter agents. Trust scoring is out of scope for ANS and lives in a separate
+  `ti-*` layer set. The clean separation matters because some deployments want verification (am I
+  being lied to?) without scoring (is this the best one?), and others want both. ANS-5's verb is
+  **verify**. A conforming AIM MAY be composed into a larger system that also performs scoring,
+  provided the scoring function does not influence verification outcomes.
 - Issue revocations or command state changes. Findings are reports; the RA decides what to do with them. ANS-1 specifies the warning event the RA emits when a finding clears quorum; the agent stays ACTIVE. Revocation only happens through the RA's own decision per ANS-1.
 - Specify grade-tier rules for principal bindings. ANS-5 specifies *how* to verify each binding type; *which* bindings are acceptable *when* is grade-tier policy that lives outside ANS.
 
 ## 2. Terminology
 
-- **AIM (Agent Integrity Monitor)**: the verification worker. Operationally, the AIM is one or more processes running independently of the RA's request path; their findings reach consumers through an implementation-defined integration.
+- **AIM (Agent Integrity Monitor)**: the service performing integrity checks. Monitoring MUST operate independently of the RA's request path; findings reach consumers through an implementation-defined integration.
 - **Verification record**: the typed result of one verification cycle for one registration. Carries per-check outcomes, an evidence pointer, and a timestamp.
 - **Evidence pointer**: an inline bundle or content-addressed reference to the network captures, certificate samples, DNS query traces, and external resolution responses the AIM gathered while verifying. Verifiers consuming an `INTEGRITY_WARNING` event can re-verify against the evidence bundle.
 - **Finding**: a verification record where one or more checks failed. Findings are surfaced per the integrity-reporting principles (§7).
 - **Mismatch vs. unreachable**: `Mismatch` means the content has changed (remediation needed); `Unreachable` means a transient network failure (retry later). Conflating the two would let a network glitch trigger suppression of a legitimate agent.
 
-## 3. The `VerificationWorker` interface
+## 3. Verification results
 
-The `VerificationWorker` interface is the protocol contract for ANS-5: the orchestration layer MUST ensure only ACTIVE registrations are submitted for verification. The worker runs the per-check semantics named in the verification-checks section and produces per-check results. Checks that do not apply to the input registration are omitted (not reported as failures). A conforming implementation MAY emit individual per-check results rather than a single grouped record, provided each is attributable to a verification cycle and carries provenance. The wire format of the AIM's output is implementation-defined.
+An AIM MUST evaluate only `ACTIVE` registrations, perform the applicable checks in §4, and produce
+results identifying the verification cycle, registration, per-check outcome, evidence, and timestamp.
+Inapplicable checks MUST be omitted rather than reported as failures. Results MAY be grouped or
+emitted individually if each carries the required provenance. Wire format and delivery mechanism
+are implementation-defined.
 
 ## 4. Verification checks
 
@@ -69,7 +77,12 @@ The AIM verifies each ACTIVE registration independently. A third party must dete
 
 The verification record records which checks fired; downstream consumers react per their own policy.
 
-**Identity certificate verification note.** The identity certificate is typically a client certificate not presented during a standard TLS handshake to the operational endpoint. Runtime re-verification of the identity certificate fingerprint requires a dedicated identity presentation protocol not currently defined in ANS. Implementations SHOULD record the identity certificate type as evidence; fingerprint re-verification is deferred to a future ANS extension. This check does not contribute to conformance level determination until such an extension is published.
+**Identity certificate verification note.** The identity certificate is typically a client
+certificate not presented during a standard TLS handshake to the operational endpoint. Runtime
+re-verification of the identity certificate fingerprint requires a dedicated identity presentation
+protocol not currently defined in ANS. Implementations SHOULD record the identity certificate type
+as evidence; fingerprint re-verification is deferred to a future ANS extension. This check does not
+contribute to conformance level determination until such an extension is published.
 
 ### 4.1 Check severity
 
@@ -117,7 +130,7 @@ A verifier checks an agent through independent steps, each using a different tru
 | --- | --- | --- | --- |
 | 1 | PKI certificate validation | CA system | Standard TLS. Cannot detect a compromised CA |
 | 2 | DANE record validation (FQDN anchors) | DNS (DNSSEC) | The Server Certificate fingerprint matches the TLSA record at `_{port}._tcp.{agentHost}` for the endpoint's port ([ANS-3 §6.3](ans-3-dns-publication.md#63-family-trust-records)). A compromised CA alone cannot forge this record |
-| 3 | TL inclusion proof verification | TL (signed by KMS-rooted key) | The inclusion proof confirms the registration was sealed into the log. A tampered or deleted entry breaks the proof |
+| 3 | TL inclusion proof verification | TL (signed by a trusted TL key distributed through `/root-keys`) | The inclusion proof confirms the registration was sealed into the log. A tampered or deleted entry breaks the proof |
 | 4 | Live state match | DNS + TLS | The current DNS records and certificates match what was sealed |
 
 **TLSA parameters.** The RA specifies `TLSA 3 0 1 [sha256_hash]`: DANE-EE (usage 3), full Server Certificate (selector 0), SHA-256 (matching type 1). Selector 0 produces the same hash as the badge fingerprint in the TL, so a single SHA-256 computation of the Server Certificate serves both DANE and badge verification.
@@ -141,7 +154,9 @@ The RA's remediation scope is infrastructure integrity: do the live DNS records 
 
 ### 7.1 Warning, not state change
 
-The AIM records integrity findings in its own data store. The registry ingests these findings through an implementation-defined integration.
+The AIM MUST make findings and associated evidence available to consumers through an
+implementation-defined integration. Its authority remains limited to reporting: it MUST NOT
+command RA state changes, and the RA MUST independently verify findings under §7 before acting.
 
 When a finding meets the quorum requirement, consumers of the finding take action per their own policy. The agent remains `ACTIVE` — a confirmed finding is an advisory signal, not a state change. When the discrepancy clears, the finding is resolved.
 
@@ -151,7 +166,7 @@ A consumer's discovery service MAY suppress agents with unresolved warnings; the
 
 A conformant ANS-5 implementation:
 
-1. Exposes a `VerificationWorker` whose `verify()` operation produces a `VerificationRecord` for any combination of ANS-0 anchor profile and ANS-3 DNS profile.
+1. Produces verification results meeting §3 for any combination of ANS-0 anchor profile and ANS-3 DNS profile.
 2. Implements every check in the verification-checks section that applies to the input registration.
 3. Distinguishes `Unreachable` from `Mismatch` per the terminology section and never raises an `Unreachable` as a finding.
 4. Does not issue revocations or commit state changes; produces verification records only.
@@ -160,7 +175,11 @@ A conformant ANS-5 implementation:
 7. Marks records as `degraded` when the underlying ANS-0 claim was retrieved via the soft-stale fallback.
 
 
-**Optional surface.** Per-binding-type verification coverage (each row in the verification-checks section fires only when the registration carries the corresponding binding); AIM verification cadence is operator-defined. A conforming verifier MUST NOT downgrade integrity scoring solely because a registration omits an optional binding type, and MUST NOT reject a `VerificationRecord` because the AIM omitted an unavailable check.
+**Optional surface.** Per-binding-type verification coverage (each row in the verification-checks
+section fires only when the registration carries the corresponding binding); AIM verification
+cadence is operator-defined. A conforming verifier MUST NOT downgrade integrity scoring solely
+because a registration omits an optional binding type, and MUST NOT reject a `VerificationRecord`
+because the AIM omitted an unavailable check.
 
 **Conformance levels.** Implementations declare their conformance level:
 

@@ -12,7 +12,7 @@ ANS-4 specifies how registration **and identity** events flow into an append-onl
 log that produces verifiable receipts. ANS-4 is part of the ANS notary layer, which records what
 can be cryptographically verified without making judgments about trust. Trust scoring is out of
 scope for ANS and lives in the separate Trust Index specification. There is one Merkle tree; agent and
-Verified-Identity events share it, read through per-object indexes (§5.3).
+Verified-Identity events share it, read through per-object views (§5.3).
 
 ANS-4 specifies:
 
@@ -47,7 +47,7 @@ ANS-4 does **not** specify:
 | Co-located signatures | JWS Detached | When a signature resides in the same JSON object as its data, the signature fields MUST be excluded from the signed payload. The exclusion scope MUST be explicit |
 | Signature wire format | JWS Compact | `<protected_header>..<signature>` (two dots; empty middle section is the detached payload) |
 | Algorithms | ES256 (ECDSA P-256/SHA-256) | Every TL-produced signature — checkpoint, attestation, receipt, status token — and every producer key is ES256. The JWS layer additionally recognizes RS256 for interoperability (verified if presented, never emitted) and EdDSA on the ANS-0 identity-proof surface |
-| Leaf hash | [RFC 6962 §2.1](https://www.rfc-editor.org/rfc/rfc6962) | `SHA-256(0x00 ‖ JCS(envelope))` over the **fully signed envelope** — including the TL's outer attestation signature. This is the leaf Tessera appends and the hash an offline verifier recomputes when walking an inclusion proof |
+| Leaf hash | [RFC 6962 §2.1](https://www.rfc-editor.org/rfc/rfc6962) | `SHA-256(0x00 ‖ JCS(envelope))` over the **fully signed envelope** — including the TL's outer attestation signature. This is the leaf the TL appends and the hash an offline verifier recomputes when walking an inclusion proof |
 
 JWS protected headers: `alg` and `kid` are REQUIRED on every signature; `typ`, `timestamp` (unix
 seconds at signing), and `raid` (RA instance identifier, producer signatures only) are OPTIONAL.
@@ -55,23 +55,29 @@ seconds at signing), and `raid` (RA instance identifier, producer signatures onl
 **TL signing-key topology.** One ECDSA P-256 key drives every outbound TL signature: the C2SP
 checkpoint's primary signature line, the JWS additional-signer line on the same checkpoint, the
 outer envelope attestation on every appended event, SCITT COSE receipts, and status tokens.
-The reference deployment runs a single key, so its `GET /root-keys` serves one verification line
-(§5.1) and verifiers map the 4-byte `kid` in a receipt's protected header to it in O(1).
-Single-key is a deployment simplification, not the contract: the C2SP note format carries any
-number of verifier lines, the line set is append-only (§5.1), and consumers MUST accept multiple
-lines ([ANS-6 §4.5](ans-6-agent-authentication.md#45-root-keys)).
+Single-key is a deployment simplification, not the contract: every key a TL signs with is
+advertised as a verifier line at `GET /root-keys` (§5.1), the line set is append-only, the C2SP
+note format carries any number of lines, and consumers MUST accept multiple lines
+([ANS-6 §4.5](ans-6-agent-authentication.md#45-root-keys)). A verifier resolves the 4-byte `kid`
+in a receipt's protected header against those lines. *(Informative: the reference deployment runs
+a single key and so publishes one line.)*
 
-## 4. The `TransparencyLog` interface
+## 4. Transparency Log operations
 
-The `TransparencyLog` contract is the protocol surface for ANS-4: append, per-object reads, and checkpointing.
+ANS-4's protocol surface is three operations: append, per-object reads, and checkpointing.
 
 `append` is the write operation. The RA POSTs the raw inner-event body with its producer signature in the
-`X-Signature` header (a detached JWS; request bodies are capped at 256 KiB). The TL validates the signature
-against the producer-key registry (§6), wraps the event in a sealed envelope, sequences it into the next
-available log position — batching with other events arriving in the same window — and signs a checkpoint
-covering the new tree root as each batch seals. The append response is `200` with the assigned `logId`; the TL
-**dedupes by content hash**, so a retried submission of the exact same signed bytes lands on the same leaf
-rather than a duplicate. Receipts are retrieved afterward from the per-object receipt endpoints.
+`X-Signature` header (a detached JWS; request bodies are capped at 256 KiB). The TL MUST validate the
+signature against the producer-key registry (§6), construct the sealed envelope, append it to the log in
+log order, and issue a signed checkpoint covering it within the deployment's checkpoint cadence (§8,
+operator policy). The append response is `200` with the assigned `logId`. After producer validation,
+submissions with the same `SHA-256(JCS(inner event))` are **duplicates** under the ingest API's
+equivalence rule ([`api/api-spec-tl-v2.yaml`](../api/api-spec-tl-v2.yaml)): a duplicate of an
+already-sealed event MUST return `200` with `duplicate: true` and the original leaf's `logId`, index,
+and hash, and MUST NOT append a second leaf; concurrent duplicate submissions MUST have the same
+single-leaf outcome. How the TL locates the existing event is implementation-defined. Receipts are
+retrieved afterward from the per-object receipt endpoints and become available once a checkpoint covers
+the leaf (§5.2).
 
 Per-object reads serve one agent's or identity's sealed state: the badge (latest sealed event plus inclusion proof and computed status), the audit history (every event on the object's stream, each with its own proof), the COSE receipt, and — for agents — a status token (§5.2).
 
@@ -100,9 +106,9 @@ Read-only endpoints require no authentication. Verification MUST NOT require acc
 
 The TL distributes its verification keys via `GET /root-keys` as newline-delimited sumdb-note
 verifier lines (text/plain), so any verifier can check checkpoint, receipt, attestation, and
-status-token signatures without contacting the RA. The reference deployment publishes one line —
-its single-key topology (§3) — but the format and this contract are multi-line; the 4-byte key
-hash embedded in each line is the value receipts carry as the COSE `kid`.
+status-token signatures without contacting the RA. The format and this contract are multi-line
+even when a given TL publishes one line (§3); the 4-byte key hash embedded in each line is the
+value receipts carry as the COSE `kid`.
 
 The line set is **append-only**. A TL MAY add a key (a new line); it MUST retain every previously
 published line. Keys never expire — a retired key stops signing new artifacts, but removing its
@@ -162,8 +168,9 @@ serving an RA without it exposes none of the `/v1/identities/*` routes and seals
 events, and is fully conformant.
 
 There is **one transparency log — a single Merkle tree.** Every event, agent or identity, is
-producer-signed and appended to that one tree in log order. A **"stream"** is a **read index**
-over that single log (by `agentId` or `identityId`), never a separate tree. The Verified-Identity
+producer-signed and appended to that one tree in log order. A **"stream"** is the **read view**
+selected by its documented endpoint over that single log (by `agentId` or `identityId`), in log
+order, never a separate tree. The Verified-Identity
 object ([ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object)) is sealed and read
 through this surface; ANS-0 defines the object and the visibility semantics, ANS-4 the routes.
 
@@ -172,8 +179,9 @@ The identity **event family** is `IDENTITY_VERIFIED`, `IDENTITY_UPDATED`, `IDENT
 The sealed-payload field set and per-type required-field matrix are documented there; the
 machine-readable conformance schema is [`api/identity-event-schema-v2.json`](../api/identity-event-schema-v2.json),
 which a sealed identity log entry MUST validate against. Proof, rotation, and revocation events
-are indexed under `identityId`; link/unlink events are additionally indexed under each named
-`ansId` for the read-time join. The TL public read surface gains:
+appear on the identity's stream; link/unlink events appear on the identity's stream and are
+additionally served for each named `ansId` through that agent's identity-history endpoint, never
+as events in the agent's lifecycle audit. The TL public read surface gains:
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -200,7 +208,7 @@ Producer-key registration:
 
 1. The operator generates the producer key pair under the RA's key manager; the private key never leaves the RA instance.
 2. The operator registers the public key with the TL (`POST /internal/v1/producer-keys`, admin-gated), supplying the client-chosen `key_id`, the `ra_id`, `public_key_pem` (SPKI), `algorithm` (`ES256`), and the required `valid_from` and `expires_at` window (`valid_from` must precede `expires_at`). A duplicate `key_id` is rejected (409). Bootstrap seeding via configuration is equivalent.
-3. The TL stores the key under `(ra_id, key_id)` and returns the `key_id`, `status`, and a `fingerprint` of the registered key.
+3. The TL associates the registered key with its `(ra_id, key_id)` and returns the `key_id`, `status`, and a `fingerprint` of the registered key.
 4. The RA carries the `kid` and `raid` in the protected header of every statement signature.
 
 Rotation uses an overlap window: new keys are registered with future `valid_from` dates; both old and new
@@ -240,16 +248,16 @@ checkpoint byte-for-byte, and validating the TL signature via `/root-keys` (§5.
 publishes the HCS topic ID alongside its TL origin documentation; pinning the topic ID to the
 TL's identity is the defense against topic substitution.
 
-**Status.** The HCS-14 and HCS-27 standards are finalized. The open-source reference
-implementation does not yet ship the HCS publishing adapter; it slots in at the checkpoint
-boundary without changing the wire contract of any surface above.
+**Status.** The HCS-14 and HCS-27 standards are finalized. HCS anchoring is OPTIONAL (§1); a TL
+that adds it does so at the checkpoint boundary without changing the wire contract of any surface
+above.
 
 ## 8. Conformance
 
 A conformant ANS-4 implementation:
 
 1. Accepts statements only with verified producer signatures (§6) and seals each into a leaf per the leaf-hash rule (§3).
-2. Dedupes appends by content hash, so byte-identical retries land on the same leaf.
+2. Returns the existing leaf for a duplicate submission (§4) instead of appending a second one.
 3. Returns SCITT receipts matching the COSE profile in §5.2, each issued against a checkpoint that covers its leaf.
 4. Exposes the verification API (§5) over HTTPS with no authentication on read-only endpoints.
 5. Implements producer authentication with overlap-window key rotation (§6).
@@ -288,7 +296,7 @@ Verified-Identity event family — `IDENTITY_VERIFIED`, `IDENTITY_UPDATED`, `IDE
 [ANS-0 §8.1](ans-0-identity-anchor.md#81-the-identity-event-family-and-ingest)). ANS-4 specifies
 that the TL accepts these event types, seals each with the same receipt format, and preserves
 them. All of them are appended to the one Merkle tree (§5.3); the per-object "streams" are read
-indexes, not separate logs.
+views, not separate logs.
 
 ## Appendix A: Worked examples
 

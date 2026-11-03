@@ -75,7 +75,7 @@ leaf rather than appending a new one.
 | Field | Contents |
 | --- | --- |
 | `schemaVersion` | `V2` |
-| `status` | Computed at query time, not stored in the sealed event: `ACTIVE`, `DEPRECATED`, `REVOKED`, `EXPIRED`, `WARNING` (certificate approaching expiry), or `UNKNOWN` |
+| `status` | Derived by the TL; not part of the sealed event: `ACTIVE`, `DEPRECATED`, `REVOKED`, `EXPIRED`, `WARNING` (certificate approaching expiry), or `UNKNOWN` |
 | `merkleProof` | Inclusion proof. `leafHash` is hex of the RFC 6962 leaf hash; `rootHash` and each `path` entry are standard base64. `treeVersion` is `1`, reserved to roll forward on breaking tree changes |
 | `payload.logId` | TL entry identifier (UUIDv7) |
 | `payload.producer.event` | The inner event the RA submitted (identifier field `ansId`) |

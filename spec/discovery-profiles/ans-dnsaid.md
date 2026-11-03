@@ -7,12 +7,9 @@ Version: 0.1.0
 Date: 2026-06-29
 Audience: implementers building an ANS-conformant Registration Authority
 
-`ANS_DNSAID` emits one SVCB record ([RFC 9460](https://www.rfc-editor.org/rfc/rfc9460.html)) per
-protocol endpoint at the agent's bare FQDN, carrying its connection hints and per-endpoint
-capability locators in DNS-AID draft-02 SvcParams. It is the **default** discovery profile — applied
-when a registration omits `discoveryProfiles` (or sends an empty array); an operator opts into
-[ANS_TXT](ans-txt.md) explicitly. It is self-contained: registering `ANS_DNSAID` alone also emits the
-ANS-family trust records ([ANS-3 §6.3](../ans-3-dns-publication.md#63-family-trust-records)).
+`ANS_DNSAID` is the default V2 discovery profile. It emits one RFC 9460 SVCB record per protocol
+endpoint at the agent's FQDN, using DNS-AID draft-02 parameters and the family trust records in
+[ANS-3 §6.3](../ans-3-dns-publication.md#63-family-trust-records).
 
 ## 1. Records, labels, and selection
 
@@ -99,7 +96,7 @@ Every emitted record carries TTL `3600`. The composed set is sealed verbatim int
 
 ## 5. Freshness and ANS-5 monitoring
 
-Records carry TTL `3600`. ANS-5's DNS-pointer check re-queries the SVCB row and validates DNSSEC
+ANS-5's DNS-pointer check re-queries the SVCB row and validates DNSSEC
 where the zone is signed. The verifier compares the expected SvcParams against the live record by
 value-equality; because the comparison requires equal values, a Private-Use key collision with an
 unrelated experiment that picked the same code point can only cause a false negative (verify-dns
@@ -145,13 +142,10 @@ publishing the announced record (ANS-3 §4); it is not a distinct error code.
 
 ## 9. Status and requirement
 
-**Requirement: Default.** `ANS_DNSAID` is the profile applied when `discoveryProfiles` is omitted
-or empty on the V2 lane; an operator need do nothing to select it. Its SVCB rows carry the required
-signal when it is the sole resolved profile (§4). An RA MUST emit the SVCB row exactly as §2
-specifies — `keyNNNNN` Private-Use presentation, never the named DNS-AID forms. The V1 lane never
-consults the default and stays pinned to `ANS_TXT`.
+**Requirement: Default on V2.** Selection and V1 compatibility are defined in §1; required flags
+are defined in §4. Records MUST use the exact §2 form, including the Private-Use `keyNNNNN` keys.
 
-**Status: Active.** Implemented and tested, emitting real SVCB rows the RA verifies at verify-dns.
+**Status: Active.** Implemented and tested, emitting the SVCB records verified at verify-dns.
 
 ## 10. Object schemas (worked example)
 

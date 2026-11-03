@@ -162,10 +162,10 @@ established by a consistency proof computed from the tiles (§9.1).
 
 ### 5.3 Identity surface
 
-This surface is present only when the RA implements the **optional** Verified Identity capability
-([ANS-0 §12.2](ans-0-identity-anchor.md#122-optional-capability-verified-identities)). A TL
-serving an RA without it exposes none of the `/v1/identities/*` routes and seals no `IDENTITY_*`
-events, and is fully conformant.
+This surface applies to the optional
+[Verified Identity capability](ans-0-identity-anchor.md#122-optional-capability-verified-identities).
+A TL serving an RA without it exposes no `/v1/identities/*` routes and seals no `IDENTITY_*`
+events; it remains conformant.
 
 There is **one transparency log — a single Merkle tree.** Every event, agent or identity, is
 producer-signed and appended to that one tree in log order. A **"stream"** is the **read view**

@@ -195,9 +195,9 @@ those flows.
 
 ### 6.4 Identity events (V2)
 
-These events exist only when the RA implements the **optional** Verified Identity surface
-([ANS-0 §12.2](ans-0-identity-anchor.md#122-optional-capability-verified-identities)); an RA
-without it emits none of them and is fully conformant.
+These events apply only to RAs implementing the optional
+[Verified Identity capability](ans-0-identity-anchor.md#122-optional-capability-verified-identities).
+RAs without that capability emit no identity events.
 
 The Verified-Identity event family — `IDENTITY_VERIFIED`, `IDENTITY_UPDATED`, `IDENTITY_REVOKED`,
 `IDENTITY_LINKED`, `IDENTITY_UNLINKED` — is defined by
@@ -306,7 +306,7 @@ Producer-key expiry and revocation both gate **new** ingest — an expired or re
 
 Producer-key rotation procedure:
 
-1. Generate the new producer key pair under the RA's control. The reference implementation ships a file-based ECDSA P-256 key manager; other key-management implementations may be used subject to the custody rules above.
+1. Generate the new producer key pair under the RA's control, subject to the custody rules above.
 2. Register the public key with the TL (`POST /internal/v1/producer-keys`, admin-gated). `valid_from` (set to the rotation cutover time) and `expires_at` are both required, and `valid_from` must precede `expires_at`.
 3. Continue signing with the old key until cutover; the RA's signing identity is its configured `{keyId, raId}` attestation pair.
 4. At cutover, begin signing new events with the new key. The old key remains registered and inside its validity window, so events pending delivery retain signatures that still verify at ingest.

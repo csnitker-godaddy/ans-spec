@@ -99,18 +99,10 @@ The AIM MAY monitor NS record changes for registered agents' domains. NS record 
 
 ### 4.3 Verified-identity monitoring
 
-This applies only where the RA implements the **optional** Verified Identity surface
-([ANS-0 §12.2](ans-0-identity-anchor.md#122-optional-capability-verified-identities)); a
-deployment without Verified Identities has nothing to monitor here.
-
-A Verified Identity (the *who*,
-[ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object)) is monitored as a
-**first-class object on its own cadence**, not once per linked agent. Because one identity can
-link to many agents and rotation/revocation seal exactly one event regardless of fan-out
-([ANS-0 §8.2](ans-0-identity-anchor.md#82-computed-reads-and-the-visibility-predicate)), the AIM
-**probes each identity once** and the result projects to every linked agent's view. For a fleet
-of N agents sharing one operator identity this is one probe, not N — the same fan-out saving the
-seal side enjoys.
+This section applies only to the optional
+[Verified Identity capability](ans-0-identity-anchor.md#122-optional-capability-verified-identities).
+Each identity is monitored on its own cadence: the AIM probes the identity once and applies the
+result to every linked agent's view, rather than probing it separately for each agent.
 
 The per-identity check is **sealed-vs-live key drift**: the AIM re-resolves the identifier
 through its [identity profile](identity-profiles/)'s key source (re-fetch the `did:web` document,

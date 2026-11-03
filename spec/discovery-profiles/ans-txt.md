@@ -7,13 +7,9 @@ Version: 0.1.0
 Date: 2026-06-29
 Audience: implementers building an ANS-conformant Registration Authority
 
-`ANS_TXT` is the original `_ans` TXT family — **opt-in** on the V2 lane (the default is
-[ANS_DNSAID](ans-dnsaid.md)) and the profile the V1 lane is pinned to. It emits one `_ans` TXT
-record per protocol endpoint plus a single HTTPS RR at the agent's bare FQDN, alongside the
-ANS-family trust records
-([ANS-3 §6.3](../ans-3-dns-publication.md#63-family-trust-records)). Supported indefinitely for
-operators whose zone-edit tooling targets `_ans.{fqdn}` and whose DNS provider does not run SVCB in
-service mode.
+`ANS_TXT` emits `_ans` TXT discovery records and an HTTPS connection hint. It is opt-in on V2,
+pinned on V1, and supported indefinitely. Selection and composition follow
+[ANS-3 §6](../ans-3-dns-publication.md#6-discovery-profiles).
 
 ## 1. Records, labels, and selection
 
@@ -84,7 +80,7 @@ required signal for the transition union, while the sibling SVCB rows ride along
 
 ## 5. Freshness and ANS-5 monitoring
 
-Records carry TTL `3600`. ANS-5's DNS-pointer check re-queries the `_ans.{fqdn}` records and
+ANS-5's DNS-pointer check re-queries the `_ans.{fqdn}` records and
 validates DNSSEC where the zone is signed; the check is profile-agnostic and consults this profile's
 expected records through the ANS-3 composition contract ([ANS-5 §4](../ans-5-integrity-monitoring.md#4-verification-checks)).
 
@@ -118,14 +114,10 @@ validation errors (ANS-1); a `discoveryProfiles` element naming no supported pro
 
 ## 9. Status and requirement
 
-**Requirement: Optional (opt-in) on the V2 lane; pinned on V1.** An operator names `ANS_TXT`
-explicitly — alone, or in the `["ANS_DNSAID", "ANS_TXT"]` transition union, where the `_ans` TXT
-rows carry the required signal (§4). The V1 lane never consults the default and is always pinned to
-`ANS_TXT`. Opt-in is a requirement statement, not a deprecation signal: the profile is supported
-indefinitely.
+**Requirement: Optional (opt-in) on V2; pinned on V1.** Selection is defined in §1 and the union's
+required flags in §4. Opt-in does not imply deprecation; the profile is supported indefinitely.
 
-**Status: Active.** The original, fully-implemented `_ans` shape, sealing and verifying real
-records.
+**Status: Active.** Implemented, sealing and verifying the records defined here.
 
 ## 10. Object schemas (worked example)
 

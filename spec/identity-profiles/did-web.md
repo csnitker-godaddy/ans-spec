@@ -31,10 +31,8 @@ more keys the DID document lists under `assertionMethod`. Key-control axis only
   - `did:web:example.com` → `https://example.com/.well-known/did.json`
   - `did:web:example.com:user:al` → `https://example.com/user/al/did.json`
 
-**Any host.** The DID host need not match any agent host. Control of a DID *is* possession of its
-listed keys (DID Core); a who-identity's `did.json` legitimately lives at the operator's identity
-domain, not at an agent's host. (The rev-3 host-match rule and the v0.1.0
-`.well-known/ans-did-web-challenge.txt` location flow are **both removed** — ANS-0 §3.3.)
+**Any host.** The DID host need not match any agent host. The key-control proof below establishes
+control of the DID; no location challenge is required (ANS-0 §3.3).
 
 ## 2. Control proof — key control, multi-key
 
@@ -188,8 +186,10 @@ payload segment **equal to** the served `signingInput`):
 ```
 
 **Sealed proven key** — each `keys[]` entry of the resulting `IDENTITY_VERIFIED` event (the
-verification method quoted verbatim, §8.4 + §4; full envelope in
-[ANS-0 §8.1](../ans-0-identity-anchor.md#81-the-identity-event-family-and-ingest)):
+verification method quoted verbatim under ANS-0 §8.4 and this profile's §4). The full wrapper is
+shown in [ANS-4 example A.1](../examples/ans-4-examples.md#a1-sealed-envelope-and-append-response);
+the identity event fields are defined in
+[ANS-0 §8.1](../ans-0-identity-anchor.md#81-the-identity-event-family-and-ingest):
 
 ```json
 {

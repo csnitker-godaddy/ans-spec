@@ -8,47 +8,17 @@ Audience: implementers building or operating an ANS Registration Authority that 
 
 ## 1. Scope
 
-ANS-3 specifies how a registration's facts surface as DNS records an operator publishes and the RA
-verifies. The record set is composed from a **set of discovery profiles** — named DNS record
-families carried on the registration as `discoveryProfiles`. The bundled set in v0.1.0 is two
-profiles, each defined by one document under [`discovery-profiles/`](discovery-profiles/):
+ANS-3 defines the DNS records an RA generates for a registration, the records its operator
+publishes, and the checks required before activation. Records use the registration's `agentHost`
+or its child labels.
 
-- **`ANS_TXT`** (the [ans-txt profile](discovery-profiles/ans-txt.md)) — the original `_ans` TXT
-  family plus an HTTPS RR. **Opt-in** on the V2 lane, and the family the V1 lane is pinned to. Widely
-  deployed; supported indefinitely.
-- **`ANS_DNSAID`** (the [ans-dnsaid profile](discovery-profiles/ans-dnsaid.md)) — a DNS-AID-aligned
-  SVCB row per protocol endpoint at the bare FQDN, per [RFC 9460](https://www.rfc-editor.org/rfc/rfc9460.html).
-  The **default**: applied when a registration omits `discoveryProfiles`.
+Discovery-profile selection and composition are defined in §6. The supported profiles are
+[ANS_TXT](discovery-profiles/ans-txt.md) (TXT and HTTPS records) and
+[ANS_DNSAID](discovery-profiles/ans-dnsaid.md) (DNS-AID SVCB records); their documents define the
+wire syntax. Both include the family trust records in §6.3.
 
-The core contract here never changes when a profile is added, amended, or retired; per-profile wire
-detail lives in the profile documents. That split is the point of [§6](#6-discovery-profiles).
-
-ANS-3 defines:
-
-- The DNS record-generation contract: given a registration and its selected profiles, provide the
-  records the operator must publish (§2).
-- The record set and child-label structure, including the **family trust records** (`_ans-badge`
-  TXT and the server-cert TLSA) every ANS-family profile shares (§3, §6.3).
-- The activation validations the RA runs against the announced records before a registration
-  transitions from `PENDING_DNS` to `ACTIVE` (§4).
-- The discovery-profile registry, the profile template, and the composition rules — set semantics,
-  canonical record order, deduplication, required flags, and default normalization (§6).
-- The DNS management role split between AHP, RA, and DNS provider (§5).
-
-Every record is generated for the agent's `agentHost` — the FQDN primary anchor every registration
-carries ([ANS-1](ans-1-registration.md)) — and the child labels under it.
-
-ANS-3 specifies **DNS record generation and publication orchestration**. DANE verification (the
-verifier-side procedure of validating TLSA records and matching Server Certificates) spans ANS-3 and
-ANS-5. ANS-3 defines the DNS record formats and emission rules; ANS-5 specifies the verification
-procedure that consults those records during verification.
-
-ANS-3 does **not** specify:
-
-- The per-profile wire syntax of the `_ans` TXT records, the HTTPS RR, or the SVCB SvcParams. Those
-  live in the [discovery-profile documents](discovery-profiles/).
-- How the Server Certificate or Identity Certificate is issued. ANS-1 and ANS-2 cover those.
-- The verifier-side DANE verification procedure. That is in ANS-5.
+[ANS-1](ans-1-registration.md) and [ANS-2](ans-2-versioned-naming.md) govern certificates;
+[ANS-5](ans-5-integrity-monitoring.md) governs ongoing DNS and DANE verification.
 
 ## 2. DNS record-generation contract
 
@@ -169,7 +139,7 @@ deprecation signal.
 
 ### 6.2 The profile template
 
-Every discovery-profile document specifies, in this order:
+Every discovery-profile document specifies the following content:
 
 1. Records, labels, and selection.
 2. Record assembly — the exact value form and parameter composition, in order.

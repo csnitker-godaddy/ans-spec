@@ -37,8 +37,8 @@ kind.
   resolved through ENS via DNSSEC-gated resolution — have **no on-chain owner**: their control
   plane is the DNS zone, which ANS already proves through ACME (the
   [fqdn profile](fqdn.md)), not this profile.
-- **Derived encodings** (DNS wire format for contract calls, labelhashes) are computed at call
-  time and never stored or sealed.
+- **Derived encodings** (DNS wire format for contract calls, labelhashes) are derived from the
+  canonical name as needed and are never part of the sealed identity evidence.
 
 ## 2. Control proof — key control, owner signature
 
@@ -82,7 +82,7 @@ checks, **in order** — every check clean before any seal:
      operators are **delegates**, not the owner, and are NOT acceptable signers — a
      records-management grant must never become an identity-grade credential. Failure →
      `ENS_SIGNATURE_INVALID`.
-5. **Nonce**: unexpired, unconsumed, consumed inside the success transaction (ANS-0 §3.2 token
+5. **Nonce**: unexpired, unconsumed, consumed by the successful call only (ANS-0 §3.2 token
    discipline).
 
 **EIP-712 binding.** The typed-data encoding is a thin wrapper that carries the served signing
@@ -200,10 +200,11 @@ retryable error (`ENS_CHAIN_UNAVAILABLE`) that never echoes endpoint details (no
 
 Owner resolution is onchain by construction: `findOwner` is a pure view walk over the canonical
 registries, which perform no offchain lookups, so a legitimate walk never produces an ERC-3668
-`OffchainLookup`. All control-path `eth_call`s (the registry walk and any ERC-1271 verification)
-therefore MUST run with client-side CCIP-Read (ERC-3668) resolution **disabled**: a control-path
-`OffchainLookup` can only originate from a registrant-controlled contract in the path, so it MUST
-be treated as a hard failure (`ENS_OFFCHAIN_LOOKUP_BLOCKED`), never followed.
+`OffchainLookup`. An ERC-3668 `OffchainLookup` revert on any control-path `eth_call` (the registry
+walk and any ERC-1271 verification) therefore MUST be treated as a hard failure
+(`ENS_OFFCHAIN_LOOKUP_BLOCKED`) and MUST NOT trigger an offchain request: it can only originate
+from a registrant-controlled contract in the path. Running these calls with client-side CCIP-Read
+resolution disabled is one mechanism that guarantees this.
 
 A deployment that additionally reads ENS *records* (the §5 ENSIP-26 cross-check) may traverse
 wildcard/offchain resolution (CCIP-Read), which **is** registrant-steered and MUST be hardened
@@ -234,9 +235,9 @@ supporting `ens` is optional, but an RA that enables it MUST perform every check
 **Status: Postponed (design of record).** The flow above is settled and its external surface is
 live (the ENS registry hierarchy, `UniversalResolverV2.findOwner`, and the universal
 signature-validation interface are deployed); the kind is disabled until an ENS owner-resolver
-and an Ethereum-signature verifier are wired and tested in the RA implementation, returning
+and an Ethereum-signature verifier are implemented and tested, returning
 `IDENTIFIER_KIND_UNSUPPORTED` until then. Promotion to Active requires: ENSv2 live on the RA's
-configured chain, a pinned-RPC registry navigator behind the port, an Ethereum-signature verifier (EIP-712 + EIP-191 + ERC-1271;
+configured chain, a pinned-RPC registry navigator, an Ethereum-signature verifier (EIP-712 + EIP-191 + ERC-1271;
 ERC-6492-style universal validation), an ENSIP-15 normalizer, tests against live chain reads,
 the request/challenge/verify shapes below fixed in `api/api-spec-v2.yaml`, and
 the account-based seal shape fixed in `api/api-spec-tl-v2.yaml` /

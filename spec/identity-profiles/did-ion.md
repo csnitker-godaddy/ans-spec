@@ -31,8 +31,8 @@ resolution backend (a Sidetree/ION node) and the long-form vs short-form DID han
 - **SSRF**: ION node resolution is an egress dependency. Pin to a configured, trusted resolver
   endpoint; if a registrant-supplied node URL is ever accepted, harden exactly like did:web
   (denylist, pinning, bounds, no oracle).
-- **What gates promotion**: an ION resolver behind `port.DIDResolver` (long-form self-resolution +
-  node reconciliation), tests, and the node egress path settled.
+- **What gates promotion**: an ION resolver (long-form self-resolution + node reconciliation),
+  tests, and the node egress path settled.
 
 Open question: whether to accept long-form DIDs that are not yet anchored on Bitcoin (usable but
 not yet tamper-anchored) or to require anchoring before VERIFIED — the latter is stronger but adds

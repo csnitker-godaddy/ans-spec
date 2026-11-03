@@ -7,13 +7,9 @@ Version: 0.1.0
 Date: 2026-06-29
 Audience: implementers building an ANS-conformant Registration Authority
 
-`ANS_TXT` is the original `_ans` TXT family — **opt-in** on the V2 lane (the default is
-[ANS_DNSAID](ans-dnsaid.md)) and the profile the V1 lane is pinned to. It emits one `_ans` TXT
-record per protocol endpoint plus a single HTTPS RR at the agent's bare FQDN, alongside the
-ANS-family trust records
-([ANS-3 §6.3](../ans-3-dns-publication.md#63-family-trust-records)). Supported indefinitely for
-operators whose zone-edit tooling targets `_ans.{fqdn}` and whose DNS provider does not run SVCB in
-service mode.
+`ANS_TXT` emits `_ans` TXT discovery records and an HTTPS connection hint. It is opt-in on V2,
+pinned on V1, and supported indefinitely. Selection and composition follow
+[ANS-3 §6](../ans-3-dns-publication.md#6-discovery-profiles).
 
 ## 1. Records, labels, and selection
 
@@ -84,7 +80,7 @@ required signal for the transition union, while the sibling SVCB rows ride along
 
 ## 5. Freshness and ANS-5 monitoring
 
-Records carry TTL `3600`. ANS-5's DNS-pointer check re-queries the `_ans.{fqdn}` records and
+ANS-5's DNS-pointer check re-queries the `_ans.{fqdn}` records and
 validates DNSSEC where the zone is signed; the check is profile-agnostic and consults this profile's
 expected records through the ANS-3 composition contract ([ANS-5 §4](../ans-5-integrity-monitoring.md#4-verification-checks)).
 
@@ -99,9 +95,10 @@ lists.
 
 ## 7. Coexistence and presentation safety
 
-- **CNAME at the apex** blocks the HTTPS RR (RFC 1034 §3.6.2), which is why it is `Required=false`;
-  operators needing both a CNAME and an apex HTTPS RR use CNAME flattening at the provider. The
-  `_ans` child label is a separate DNS node and is unaffected by a CNAME at the apex.
+- **CNAME at the apex** blocks the HTTPS RR (RFC 1034 §3.6.2), which is why it is `Required=false`.
+  Operators choosing to publish the HTTPS RR while retaining aliasing behavior need an arrangement
+  without a conflicting CNAME at `agentHost`; CNAME flattening is one option (ANS-3 §8.3). The `_ans`
+  child label is a separate DNS node and is unaffected by a CNAME at the apex.
 - **Sibling agent-discovery drafts** publish under different underscored leaves (`_agents`,
   `_agent`, …); `_ans` does not collide with them (ANS-3 §8.4).
 - **Presentation**: `_ans` TXT values are free-form character-strings; this profile has none of the
@@ -111,20 +108,16 @@ lists.
 
 This profile defines no codes of its own. Endpoint and URL validation surface the core
 `INVALID_ENDPOINT`, `ENDPOINT_HOST_MISMATCH`, `DUPLICATE_ENDPOINT`, and `DUPLICATE_PROTOCOL`
-validation errors (ANS-1); a `discoveryProfiles` element naming no wired profile is rejected with
+validation errors (ANS-1); a `discoveryProfiles` element naming no supported profile is rejected with
 `INVALID_DISCOVERY_PROFILE` (ANS-3 §6.4). A verify-dns mismatch keeps the registration in
 `PENDING_DNS` and the operator reconciles by publishing the announced record (ANS-3 §4).
 
 ## 9. Status and requirement
 
-**Requirement: Optional (opt-in) on the V2 lane; pinned on V1.** An operator names `ANS_TXT`
-explicitly — alone, or in the `["ANS_DNSAID", "ANS_TXT"]` transition union, where the `_ans` TXT
-rows carry the required signal (§4). The V1 lane never consults the default and is always pinned to
-`ANS_TXT`. Opt-in is a requirement statement, not a deprecation signal: the profile is supported
-indefinitely.
+**Requirement: Optional (opt-in) on V2; pinned on V1.** Selection is defined in §1 and the union's
+required flags in §4. Opt-in does not imply deprecation; the profile is supported indefinitely.
 
-**Status: Active.** The original, fully-implemented `_ans` shape, sealing and verifying real
-records.
+**Status: Active.** Implemented, sealing and verifying the records defined here.
 
 ## 10. Object schemas (worked example)
 

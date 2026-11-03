@@ -57,7 +57,7 @@ ANS-6 does **not** specify:
   this request — the mTLS `CertificateVerify` in Method A, the DPoP proof in Method B.
 - **Verification tier**: badge tier (online) or SCITT tier (offline), per §3.2.
 - **Possession-proof method**: Method A (mTLS) or Method B (application-layer DPoP), per §3.3.
-- **Replay cache**: the callee-side store enforcing single-use DPoP proof identifiers (§7.6).
+- **Replay cache**: the callee-side state, however realized, that enforces single-use DPoP proof identifiers (§7.6).
 - **Verification**: establishing a peer's identity and liveness from ANS artifacts (§3.1 rows
   1–2). ANS-5 runs verification out-of-band and periodically; the §5–§7 procedures embed it per
   connection.
@@ -85,12 +85,11 @@ possession but not liveness accepts a revoked agent. All three are required.
 | Tier | Artifacts | Trust model | Per-request network calls |
 | --- | --- | --- | --- |
 | **Badge** | Badge JSON fetched from the TL | Trust the TL's response at query time | DNS lookup + TL query (cacheable) |
-| **SCITT** | Receipt + status token, presented in HTTP headers | Verify signatures and Merkle proof locally | None — verification is local computation (under Method B the replay cache adds callee-side state, shared across replicas, §7.6) |
+| **SCITT** | Receipt + status token, presented in HTTP headers | Verify signatures and Merkle proof locally | None — verification is local computation (under Method B the replay cache adds authority-wide callee-side state, §7.6) |
 
 The SCITT tier is RECOMMENDED for new implementations: a verifier holding the TL's root keys
 (§4.5, fetched once and cached) verifies peers with no DNS lookup and no TL query in the request
-path. The only recurring network dependency is each agent refreshing its **own** status token in
-the background (§4.6). The badge tier remains fully supported and is sufficient where online TL
+path. Each agent refreshes its **own** status token (§4.6). The badge tier remains fully supported and is sufficient where online TL
 queries are acceptable. The tiers compose: a SCITT-tier verifier falls back to the badge tier
 when a peer presents no artifacts (§9).
 
@@ -109,13 +108,6 @@ In both methods the **callee** is authenticated the same way: TLS server authent
 its possession proof, and §5 provides its identity and liveness checks. The methods differ only
 in how the **caller** proves itself.
 
-For consumers scoring interaction strength: the Trust Index's interaction-context model
-([TRUST_INDEX_SPEC.md Appendix C](https://github.com/agentnameservice/trust-index-spec/blob/main/TRUST_INDEX_SPEC.md#appendix-c-interaction-context-model-informational-implementation-recommended))
-classifies authentication methods for profile adjustment. In its terms Method A is the `MTLS_*`
-family and Method B corresponds to `JWT_CERT` — a proof signed by the agent's Identity
-Certificate. The mapping is informative: ANS-6 defines the wire procedures, the Trust Index
-consumes their outcome.
-
 ### 3.4 Composing tiers and methods
 
 Method A composes with either tier: the mTLS handshake authenticates the caller's certificate,
@@ -128,8 +120,8 @@ fingerprint arrays (§7.5), and its whole point is a request path free of per-re
 ### 4.1 Badge
 
 `GET /v1/agents/{agentId}` on the TL returns the badge: the agent's most recent sealed event
-wrapped in the TL envelope, with a Merkle inclusion proof (`merkleProof`), a `status` computed at
-query time, and the TL's signature over the payload. The envelope is `schemaVersion: "V2"`; the
+wrapped in the TL envelope, with a Merkle inclusion proof (`merkleProof`), its current derived
+`status`, and the TL's signature over the payload. The envelope is `schemaVersion: "V2"`; the
 inner event carries `ansId`, `ansName`, `agent {host, name, version, providerId}`, and
 `attestations` with certificate **arrays**. A worked response lives at [ANS-4 example
 A.2](examples/ans-4-examples.md#a2-tl-badge-response); the machine-readable schema is
@@ -352,10 +344,10 @@ preceded by the C2SP key-type octet `0x02`). Parsers MUST recompute the hash fro
 SPKI and reject a line whose declared `key_hash` disagrees.
 
 One TL key signs every outbound artifact — checkpoints, envelope attestations, receipts, and
-status tokens — and `/root-keys` advertises exactly one line in the reference deployment
-([ANS-4 §3](ans-4-transparency.md#3-cryptographic-standards)); parsers MUST nonetheless accept
-multiple lines. Verifiers maintain a list of trusted TL domains, fetch each TL's lines once at
-bootstrap, and cache them. This one-time fetch is the only trust bootstrapping the SCITT tier
+status tokens ([ANS-4 §3](ans-4-transparency.md#3-cryptographic-standards)). Single-key is a
+deployment simplification, not the contract: the reference deployment publishes one `/root-keys`
+line, but parsers MUST accept multiple lines. Verifiers
+maintain a list of trusted TL domains, fetch each TL's lines once at bootstrap, and cache them. This one-time fetch is the only trust bootstrapping the SCITT tier
 requires.
 
 **Keys never expire, and the list only grows.** The `/root-keys` contract is append-only
@@ -390,10 +382,12 @@ exchange:
 
 Agents SHOULD include their artifacts on **every** request and response, not only the first —
 this lets peers observe a refreshed status token the moment it rotates. Re-presentation does not
-imply re-verification: a receiver SHOULD cache the verified result keyed by the artifact bytes
-(or their hash) and re-run cryptographic verification only when the presented bytes change or
-the cached token's `exp` passes. The Method-B possession proof is the exception — it is
-single-use by design and is verified on every request (§7.4). Each of these headers,
+imply re-verification: a receiver MAY reuse cryptographic verification results for byte-identical
+artifacts, provided every authentication decision still satisfies the applicable trust,
+identity-binding, status, freshness, and expiry rules (§4.4, §9.4, §11.1; a receipt's signature
+does not expire with the status token it accompanies). The Method-B possession proof is the
+exception — it is
+single-use by design and MUST be verified on every request (§7.4). Each of these headers,
 plus `Authorization` (which drives the token binding in §7.8), MUST appear at most once; a
 verifier MUST reject a request carrying duplicates, since two hops reading different values of
 the same header reach different conclusions about the same request. Receivers MUST bound decoded
@@ -401,16 +395,16 @@ header sizes before parsing. Deployments MAY additionally staple the receipt and
 into the Agent Card as a secondary distribution channel; the headers remain the per-request
 mechanism this spec verifies.
 
-Artifacts are refreshed by each agent's own runtime in the background, never in the request path:
+Each agent obtains and refreshes its own artifacts from the TL; peers never fetch them on its
+behalf. Refreshing in the background, before expiry, keeps the TL out of the agent's own request
+path and is RECOMMENDED; caller-side acquisition timing is otherwise implementation-defined:
 
-- **Status token**: re-fetched on an interval comfortably inside the TTL (the reference
-  implementation polls every ~30 minutes against a one-hour TTL; proactive refresh at 50% TTL is
-  a reasonable default).
+- **Status token**: refreshed before expiry, subject to the freshness and failure rules in §9.
 - **Receipt**: re-fetched only when the agent's latest sealed event changes — certificate
   rotation or a version's registration ([ANS-1 §7](ans-1-registration.md#7-lifecycle-operations)).
 
-Peers never call the TL to verify each other in this tier; only each agent's own background
-refresh touches the TL.
+Peers never call the TL to verify each other in this tier; only each agent obtaining its own
+artifacts touches the TL.
 
 ## 5. Authenticating a callee
 
@@ -590,14 +584,10 @@ both artifacts locally (§4.3, §4.4) and binds them to the presented certificat
 
 Either header absent → fall back to the badge tier (§6.2).
 
-### 6.4 Timing and caching
+### 6.4 Timing and caching (informative)
 
-- **First request (slow path)**: handshake completes, then verification runs before any
-  application data is processed.
-- **Subsequent requests (fast path)**: reuse the cached verification for the same certificate.
-- **Background refresh**: refresh cached badges before staleness; under the SCITT tier the
-  caller's own headers deliver fresh artifacts on every request, so the callee simply re-verifies
-  when the presented token changes.
+Verification precedes application processing (§6.1). Reuse of verification results follows §4.6
+and the freshness bounds in §11.1; caching and refresh scheduling are implementation choices.
 
 ### 6.5 Authorization placement
 
@@ -775,25 +765,34 @@ authentication only — the callee authorizes separately (§6.5 applies unchange
 
 ### 7.6 Replay protection
 
-Each proof is single-use. The callee MUST maintain a replay cache with an atomic check-and-store
-operation and:
+Each proof is single-use. A given `jti` MUST be accepted at most once across all replicas
+accepting Method-B proofs for the same `htu` authority, including when the same proof is
+presented concurrently to different replicas. The state that enforces this is the replay cache,
+however realized; it MUST satisfy:
 
-- **Retention** of at least `iat + skew + grace` per entry (a small grace, e.g. 5 seconds, keeps
-  a jti stored slightly past the freshness window so no boundary gap opens between the two
-  checks). Over-retention is the safe direction; under-retention reopens a replay.
-- **Bounded storage.** Store a fixed-width digest of the `jti` (RFC 9449 §11.1 sanctions storing
-  "only a hash thereof"), and enforce the `jti` size cap (§7.2), so a cache bounded in entry
-  count is also bounded in bytes.
-- **Fail closed.** A cache at capacity or erroring rejects the request; it never silently admits
-  a possibly-replayed proof.
+- **Retention** until at least the instant `iat + skew + grace` per entry (a small grace, e.g. 5
+  seconds, keeps a jti remembered slightly past the freshness window so no boundary gap opens
+  between the two checks). Over-retention is the safe direction; under-retention reopens a replay.
+  Restart, failover, or partition reassignment MUST preserve this protection for the remaining
+  window or fail closed.
+- **Bounded.** The state MUST be bounded in size. The `jti` size cap (§7.2) makes a bound in
+  entries also a bound in bytes; storing a fixed-width digest of the `jti` instead of the `jti`
+  itself (RFC 9449 §11.1 sanctions storing "only a hash thereof") is one way to tighten that.
+- **No early eviction.** An entry MUST NOT be discarded before its retention deadline to make
+  room for new requests; a realization that would need to evict MUST instead reject.
+- **Fail closed.** State at capacity, unavailable, erroring, or timing out rejects the request; it
+  never silently admits a possibly-replayed proof. The replay decision MUST complete within a
+  bounded time.
 - **Record after trust.** The `jti` is committed only after the full §7.4 pipeline, including the
-  status-token binding, succeeds. Recording earlier lets anyone with a self-signed certificate
-  flood the bounded cache and fail-close authentication for every legitimate caller.
-- **Shared scope behind load balancers.** An in-process cache blocks reuse within one replica
-  only; a proof replays cleanly against any other replica. Multi-replica deployments MUST share
-  the replay cache across replicas serving the same `htu` authority. Size it for the in-flight
-  window: `maxEntries ≥ peak RPS × (skew + grace)` — and alarm on occupancy before saturation
-  starts rejecting callers.
+  status-token and content bindings, succeeds, and before application processing. Recording
+  earlier lets anyone with a self-signed certificate flood the bounded state and fail-close
+  authentication for every legitimate caller.
+- **Every accepting replica.** An in-process store satisfies the single-use rule only when no
+  proof can reach more than one replica and replay history survives failover. Otherwise the
+  deployment MUST arrange that all replicas serving the authority agree — a shared store, or
+  partitioning with recovery guarantees — so that a proof accepted by one replica is rejected by
+  every other. Size the state for the in-flight window: `maxEntries ≥ peak RPS × (skew + grace)`
+  — and alarm on occupancy before saturation starts rejecting callers.
 
 The freshness window is deliberately tight (±120 seconds default): RFC 9449 §11.1 recommends a
 narrow `iat` acceptance window, and each halving of the window halves both the replay exposure
@@ -815,12 +814,14 @@ of:
   sets and strips from clients — never a raw client-supplied `X-Forwarded-*`. The reconstruction
   MUST incorporate the request's path: a constant URL collapses `htu` to one value, so a proof
   minted for any path is accepted on every path and only `htm` still binds the target.
-  Implementations SHOULD verify at wiring time that the configured reconstruction varies with the
-  path, and fail startup when it does not.
+  Implementations SHOULD detect, before serving traffic, a configured reconstruction that does not
+  vary with the request path, and refuse Method-B requests until it is corrected.
 
-Implementations MUST fail startup when neither is configured, and MUST NOT fall back to deriving
-the comparison authority from the request's own `Host` header — a default-constructed verifier
-that "works" by trusting `Host` is exactly the misconfigured callee of example A.6.
+A Method-B verifier with neither configured MUST reject every Method-B request, and MUST NOT fall
+back to deriving the comparison authority from the request's own `Host` header — a
+default-constructed verifier that "works" by trusting `Host` is exactly the misconfigured callee
+of example A.6. Refusing to start is one way to meet this; rejecting at the §7.4 preflight is
+another.
 
 ### 7.8 OAuth 2.0 composition
 
@@ -843,7 +844,8 @@ a thief with the token bytes mints a fresh proof with a matching `ath` under **i
 the thumbprint comparison proves the token was issued to the key that signed this proof. Callers
 obtain their thumbprint from their signing key to request bound tokens; callees obtain it from
 the verified proof. When both the `Authorization` scheme parse and the `ath` verification read
-the header, they MUST read identical bytes — one parser, not two.
+the header, they MUST operate on identical bytes; a header value that parses differently for the
+two checks is a rejection.
 
 ### 7.9 RFC 9449 conformance notes
 
@@ -868,25 +870,15 @@ the header, they MUST read identical bytes — one parser, not two.
 
 ### 7.10 What Method B gives up relative to Method A
 
-DPoP provides sender-constraint, not channel binding: the TLS channel is server-authenticated
-only, and the proof binds the request, not the connection. A caller induced to connect to a
-hostile callee discloses its receipt and status token (both public documents) and one single-use,
-`htu`-bound, `iat`-bounded proof — the callee learns nothing it can replay elsewhere as that
-caller, but the caller has still spoken to the wrong party; §5's callee authentication is what
-prevents that. There is also no mutual endpoint authentication at the TLS layer and no
-credential confidentiality for the proof itself.
+Method B binds a request, not the TLS connection. It provides neither channel binding nor mutual
+endpoint authentication at the TLS layer; its proof is visible to TLS-terminating intermediaries.
+A hostile callee obtains public artifacts and a single-use, target-bound, freshness-bounded proof.
+Those artifacts cannot authenticate the caller elsewhere, but callee authentication (§5) is still
+required to avoid sending a request to the wrong party (§11.8).
 
-**No request-content integrity from the base DPoP proof.** The base proof binds only the HTTP
-method and URI: neither the query string (§7.3) nor the message body is covered
-([RFC 9449 §11.7](https://www.rfc-editor.org/rfc/rfc9449#section-11.7)). A hop that terminates
-TLS — the topology Method B exists for — can therefore alter either on a first, in-flight request
-without invalidating the proof, and that is not replay: the `jti` is unseen and the `iat` fresh.
-The required `ans_content_digest` claim (§7.13) closes this for the message content; the query
-string stays uncovered by design. Method A prevents the tampering structurally — an
-intermediary cannot terminate mTLS to the callee without being the callee.
-
-Deployments needing channel binding and mutual endpoint authentication at the TLS layer run
-Method A (or both — the methods are not mutually exclusive on one callee).
+Base DPoP does not bind message content. ANS's required `ans_content_digest` (§7.13) adds that
+binding; HTTP headers and query parameters remain outside its coverage. Deployments needing
+channel binding and mutual TLS endpoint authentication use Method A, optionally alongside Method B.
 
 ### 7.11 Outcomes
 
@@ -932,11 +924,9 @@ tightened check — is a **profile revision**. This document defines revision 1 
 
 ### 7.13 Request-content binding
 
-`htm` and `htu` bind the method and target; they say nothing about the message content. A hop
-that terminates TLS can rewrite content or add it to an empty request while leaving those
-claims intact. On a first request the replay checks also pass: the `jti` is unseen and the
-`iat` fresh (§11.11). The required `ans_content_digest` claim binds the content, including its
-absence, inside the signed proof.
+A TLS-terminating intermediary can alter a first request's content without changing `htm` or
+`htu` or triggering replay detection. The required signed `ans_content_digest` binds the content,
+including its absence.
 
 **Claim semantics.** The value is a JSON string containing `base64url(SHA-256(content))`,
 using RFC 7515 §2 base64url encoding without padding. The input is the request content defined by
@@ -959,12 +949,9 @@ the caller sent empty therefore causes a digest mismatch.
 - Claim absent or malformed → reject. Every conformant signer carries the claim (§7.2), and
   every conformant Method-B callee enforces it.
 
-**The binding is transformation-hostile by design**, exactly as §7.3 is for paths: the digest
-covers the octets the caller sent, so a hop that re-encodes, recompresses, or otherwise
-rewrites content breaks the binding — the proof binds what the caller signed, not what a
-middlebox produced. Deployments MUST NOT transform request content on Method-B endpoints, the
-content analogue of §7.3's query-string rule. Changing transfer framing while preserving the
-content octets does not change the digest.
+Deployments MUST NOT transform request content on Method-B endpoints: re-encoding, recompression,
+or other content changes invalidate the digest. Transfer framing may change if the content octets
+remain unchanged.
 
 **Verify before acting.** Content hashing starts only after the proof is bound to a live ANS
 identity (§7.4 step 11). The digest may then be computed incrementally as content streams, but
@@ -973,9 +960,8 @@ content. Content-size bounding remains the deployment's ordinary concern and pre
 
 [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530) `Content-Digest` MAY be emitted alongside
 for diagnostics and generic tooling, but a verifier MUST NOT accept the header in place of the
-claim: the hop that can rewrite the body can strip or rewrite a header just as easily, and only
-the in-proof claim rides the proof's signature (§11.11). The digest computation matches
-RFC 9530's `sha-256` semantics; only the carriage differs.
+claim: an intermediary can rewrite an unsigned header, while the claim is covered by the proof's
+signature. The computation matches RFC 9530's `sha-256` semantics; only its carriage differs.
 
 The digest covers content octets, not HTTP headers or the query string. Authority-bearing
 parameters belong in the bound content or the bound path, never in the query (§7.3).
@@ -1094,8 +1080,8 @@ fail closed: a cache that is down, erroring, or at capacity rejects requests rat
 a possibly-replayed proof. There is no weaker tier to fall back to — skipping the `jti` check
 reopens the replay exposure that single-use proofs exist to close. Operationally:
 
-- **Bound the wait.** A shared cache MUST be consulted with a deadline; a timeout is a rejection,
-  never a skip.
+- **Bound the wait.** The replay check MUST complete within a bounded time; a check that does not
+  complete is a rejection, never a skip.
 - **Alarm before saturation.** A saturated cache is an authentication outage for every caller
   (§11.6), not a degradation — monitor occupancy against the §7.6 sizing
   (`maxEntries ≥ peak RPS × (skew + grace)`).
@@ -1137,8 +1123,8 @@ A conformant ANS-6 caller:
 
 5. Authenticates callees per §5 before trusting application data, including the fingerprint and
    hostname binding.
-6. Serves its own artifacts per §4.6 — on every request, refreshed in the background, never
-   minted or fetched in the request path — and, under Method B, mints proofs conformant to §7.2
+6. Presents the required receipt and a valid, unexpired status token per §4.6 on every request,
+   obtained and refreshed by itself, and, under Method B, mints proofs conformant to §7.2
    with fresh `jti` and current `iat` per request and `ans_content_digest` computed per §7.13
    over the content it transmits, including empty content.
 7. Enforces single-valued security headers in both directions (§4.6).
@@ -1171,54 +1157,40 @@ decline the §9.4 grace, or supplement critical transitions with live badge chec
 
 ### 11.2 Receipts prove history, not liveness
 
-A receipt for a revoked agent verifies forever — the tree is append-only. Receipt verification
-without a paired liveness check (status token or badge) authenticates a corpse. §3.1's
-three-proof framing exists to make this failure impossible to reach in a conformant
-implementation.
+A receipt remains valid after revocation. Authentication therefore requires a separate liveness
+check and possession proof (§3.1).
 
 ### 11.3 Leaf trust versus tree-head trust
 
-Verifying a receipt establishes that *the TL* signed the leaf — trust in the TL's key, not in an
-externally-anchored tree. The inclusion path itself rides the unprotected header and is
-unauthenticated (§4.3): the walk yields a computed root, and a TL willing to lie can mint a
-receipt for a leaf it never published. Verifiers needing stronger assurance compare the computed
-root against the TL's signed checkpoint and consistency history
-([ANS-4 §5.2](ans-4-transparency.md#52-receipts-status-tokens-checkpoints)) and, where deployed,
-the checkpoint's HCS anchoring
-([ANS-4 §7](ans-4-transparency.md#7-checkpoint-anchoring-to-hedera-hcs)) — turning
-leaf-signature trust into anchored-tree trust. Deployment postures that require anchoring are
-defined there, not here.
+A receipt authenticates the TL's signed leaf. Its unprotected inclusion path and `rootHash` do
+not authenticate a tree head (§4.3). Publication and consistency checks use the signed checkpoint
+and history ([ANS-4 §5.2](ans-4-transparency.md#52-receipts-status-tokens-checkpoints)); optional
+[HCS anchoring](ans-4-transparency.md#7-checkpoint-anchoring-to-hedera-hcs) adds an external commitment.
+These checks and deployment postures are defined in ANS-4.
 
 ### 11.4 DNS spoofing (badge tier)
 
-Without DNSSEC the `_ans-badge` lookup is spoofable. The trusted-TL allowlist (§4.2) caps the
-damage — an attacker can point the verifier at a *trusted* TL's badge for a different agent, but
-the comparisons then fail: on the caller-verification path every field anchors to the validated
-client certificate (§6.2), and on the callee path `agent.host` anchors to the name the caller
-dialed (§5.1 step 4), which the attacker's badge cannot rename. What the attacker cannot do is
-redirect to a forging TL. The SCITT tier removes the DNS dependency from the request path
-entirely.
+Without DNSSEC, badge discovery can be spoofed. The trusted-TL allowlist (§4.2) prevents redirection
+to an untrusted issuer; certificate and intended-host comparisons (§§5.1, 6.2) reject a different
+agent's badge. The SCITT tier avoids per-request DNS discovery.
 
 ### 11.5 `htu` authority spoofing and path rewriting
 
-§7.7 is a deployment requirement, not advice: with the comparison URL derived from the client's
-`Host` header, cross-origin proof replay is trivial. Path-rewriting hops between the caller and
-the verifying process break `htu` by design; terminate Method-B verification at a hop that sees
-the externally-visible path, or configure the reconstruction to reproduce it.
+The expected URL must use a trusted authority and reproduce the externally visible request path
+(§7.7). Trusting client-supplied `Host` permits cross-origin replay; path rewriting breaks the
+binding unless verification sees or reconstructs the original path.
 
 ### 11.6 Replay-cache exhaustion
 
-The replay cache is a bounded shared resource that fails closed. Committing the `jti` only after
-the status-token binding (§7.6) keeps unauthenticated floods from consuming it — an attacker
-without a TL-vouched certificate cannot occupy a single slot. Operators still monitor occupancy:
-a legitimate-traffic spike that saturates the cache rejects legitimate callers.
+Replay state is recorded only after the complete trust and content checks (§7.6), preventing
+unauthenticated proofs from occupying it. Valid traffic can still exhaust capacity and cause
+rejection; deployments monitor occupancy under §9.6.
 
 ### 11.7 Stolen access tokens
 
-`ath` alone does not sender-constrain a token: the thief holds the token bytes and mints a
-matching `ath` under its own key. The `cnf.jkt` thumbprint comparison (§7.8) is the check that
-defeats token theft, and it lives with whoever validates the token. Deployments composing OAuth
-on Method B MUST implement it there.
+A token thief can compute `ath`. Sender constraint additionally requires the token validator to
+check `cnf.jkt` against the verified proof key (§7.8). Deployments composing OAuth with Method B
+MUST perform that check.
 
 ### 11.8 Hostile callee (Method B)
 
@@ -1229,12 +1201,9 @@ exactly this reason.
 
 ### 11.9 Header and JOSE smuggling
 
-Duplicate security headers let two hops act on different bytes of the same request; §4.6 rejects
-them. Open-ended JOSE headers let a proof carry instructions that a second verifier interprets
-differently (`kid` steering key selection, `crit` demanding extensions, a multi-entry `x5c`
-inviting a chain walk); §7.2's closed header set rejects them all before any cryptography runs.
-The strictness is deliberately confined to the header — the payload stays open, and §7.12 is the
-evolution path, so closing the header does not close the profile.
+Duplicate security headers are rejected (§4.6); JOSE header checks run before proof cryptography
+(§7.2). These checks prevent components from interpreting different inputs. The payload remains
+open to ignorable claims under the profile-evolution rules (§7.12).
 
 ### 11.10 Root-key trust is fetch-channel trust
 
@@ -1257,16 +1226,9 @@ class to key misuse rather than key exfiltration — and the explicit pinning ab
 
 ### 11.11 Content manipulation behind the TLS terminator
 
-Method B's operating premise cuts both ways: the hop that lets headers survive TLS termination
-also sees — and can rewrite — the request body, and doing so on a *first* request trips no
-replay defense (§7.10). The required §7.13 claim closes this by riding the proof's signature:
-unlike an [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530) header, which the offending hop can strip or
-rewrite, a claim inside the signed payload is tamper-evident — removing it invalidates the
-proof. Every proof binds the request's content, including the absence of content through the
-empty-content digest. Adding, removing, or rewriting content causes a mismatch; a signer that
-omits the claim produces a malformed proof. As with paths (§7.3) and authorities (§11.5), the
-verifier checks what the caller signed. Transfer framing may change without altering content,
-but intermediaries must preserve the content octets (§7.13).
+An intermediary can alter an initial request without triggering replay detection. The signed
+content digest (§7.13) detects added, removed, or modified content, including changes to an empty
+request. HTTP headers and query parameters remain outside that digest's coverage.
 
 ## Appendix A: Worked examples
 

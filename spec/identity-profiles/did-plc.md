@@ -21,7 +21,7 @@ existing JWS-scheme, multi-key, fetch-based pattern almost exactly — the same 
   form is the lowercased method-specific id (fixed length).
 - **Key source**: the DID document resolved from a PLC directory (default `plc.directory`),
   listing `verificationMethod`/`assertionMethod` keys (secp256k1 / P-256) plus PLC rotation keys.
-  Fetch-based — reuses the hardened fetcher and the did:web verify pipeline (resolve at verify
+  Fetch-based — same egress rules and verify checks as did:web (resolve at verify
   time, `document.id == did`, per-`kid` assertionMethod selection, alg-pinned signature).
 - **Control axis**: key only — possession of one or more listed `assertionMethod` keys, proven
   with the shared `signedProofs[]` JWS machinery.
@@ -29,9 +29,9 @@ existing JWS-scheme, multi-key, fetch-based pattern almost exactly — the same 
 - **Freshness/monitoring**: ANS-5 re-resolves the PLC log/directory; the signal is key-set drift
   and the PLC operation log's tamper-evidence (a did:plc audit log is itself append-only).
 - **SSRF**: directory fetch is registrant-influenced (the directory host is fixed, but a
-  self-hosted PLC mirror is steerable) → same egress hardening as did:web.
-- **What gates promotion**: a PLC resolver behind `port.DIDResolver` (directory + log
-  verification), tests, and the directory egress path hardened.
+  self-hosted PLC mirror is steerable) → same egress rules as did:web.
+- **What gates promotion**: a PLC resolver (directory + log verification), tests, and the
+  directory egress path meeting ANS-0 §13.
 
 Open question to resolve before promotion: whether to validate the full PLC operation-log chain
 (rotation-key provenance) or trust the directory's resolved state — the former is stronger and

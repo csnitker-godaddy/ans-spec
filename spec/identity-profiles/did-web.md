@@ -26,16 +26,13 @@ more keys the DID document lists under `assertionMethod`. Key-control axis only
   - host is a plausible DNS name (labels of letters/digits/hyphen, no leading/trailing hyphen,
     ≤63 chars/label, ≤253 total);
   - no empty path segment, and no `.`/`..`/control-character segment (dot segments would re-path
-    the resolution URL; the same parsed segments feed both the resolution URL and the SSRF dialer
-    check, so the rejection happens exactly once, at canonicalization).
+    the resolution URL).
 - **Resolution URL** (pure function of the canonical DID):
   - `did:web:example.com` → `https://example.com/.well-known/did.json`
   - `did:web:example.com:user:al` → `https://example.com/user/al/did.json`
 
-**Any host.** The DID host need not match any agent host. Control of a DID *is* possession of its
-listed keys (DID Core); a who-identity's `did.json` legitimately lives at the operator's identity
-domain, not at an agent's host. (The rev-3 host-match rule and the v0.1.0
-`.well-known/ans-did-web-challenge.txt` location flow are **both removed** — ANS-0 §3.3.)
+**Any host.** The DID host need not match any agent host. The key-control proof below establishes
+control of the DID; no location challenge is required (ANS-0 §3.3).
 
 ## 2. Control proof — key control, multi-key
 
@@ -51,7 +48,7 @@ order** — every check clean before any seal:
 3. **`kid` present** on each proof (`DID_VERIFICATION_METHOD_INVALID` if missing) and **unique**
    across the batch (`IDENTIFIER_PROOF_INVALID` on a duplicate).
 4. **Authoritative resolution**: the RA re-fetches the DID document at verify time through the
-   hardened fetcher (§7) — the verify-time document is the key source, never a request-supplied
+   egress rules of §7 — the verify-time document is the key source, never a request-supplied
    one — and confirms `document.id == did` (`DID_DOCUMENT_ID_MISMATCH`).
 5. **Per-`kid` method selection** (each proof):
    - `kid` is a fragment of *this* DID (`startsWith(did + "#")`), else
@@ -66,7 +63,7 @@ order** — every check clean before any seal:
    critical (`crit`) headers are rejected. Failure → `PRICC_SIGNATURE_INVALID`.
 
 The RA verifies **every** submitted proof; one failure fails the whole call closed (atomic — no
-partial seal). The shared nonce is consumed once, inside the success transaction (ANS-0 §3.2).
+partial seal). The shared nonce is consumed once, by the successful call only (ANS-0 §3.2).
 
 ## 3. Key source and selection
 
@@ -105,22 +102,26 @@ revocation.
 
 ## 7. Outbound-fetch safety (SSRF)
 
-The fetch target is registrant-steered, so SSRF is a first-class control. The hardened fetcher
-([ANS-0 §13](../ans-0-identity-anchor.md#13-security-considerations)) enforces, on every fetch:
+The fetch target is registrant-steered, so SSRF is a first-class control. Every connection attempt
+made for a fetch — including redirects, alternate address attempts, and reconnections — MUST
+satisfy ([ANS-0 §13](../ans-0-identity-anchor.md#13-security-considerations)):
 
-1. An **egress IP denylist at connect time, post-DNS**: loopback, RFC 1918 / ULA private ranges,
-   link-local (which covers cloud-metadata addresses), multicast, and unspecified addresses are
-   rejected at the dialer — never by hostname-string inspection.
-2. **Per-host IP pinning** for the duration of one resolve call: the first connection fixes the
-   IP, so a DNS rebind between the initial fetch and a redirect hop cannot slip an internal target
-   past check 1.
+1. An **egress IP denylist evaluated against the address actually connected to, after DNS
+   resolution**: loopback, RFC 1918 / ULA private ranges, link-local (which covers cloud-metadata
+   addresses), multicast, and unspecified addresses are rejected. A hostname-string check, or
+   validation followed by an unchecked second resolution, does not satisfy this.
+2. **Rebind resistance**: a DNS answer that changes between the initial resolution and a later
+   connection in the same resolution (a redirect hop) MUST NOT let any connection reach an address
+   check 1 would reject. Pinning the first resolved address for the duration of the resolution is
+   one way to achieve this; applying check 1 to the address of every connection is another.
 3. **Full WebPKI** (chain to a trusted root + hostname verification), TLS 1.2+.
 4. **Bounds**: hard timeout (default 5 s), response-size cap (default 1 MiB), ≤5 redirects, each
    redirect constrained to `https` and to the **origin's registrable domain** (eTLD+1) — a
    redirect leaving the domain is `DID_REDIRECT_DOMAIN_MISMATCH`; leaving `https` or exceeding the
    hop count is `DID_RESOLUTION_FAILED`. Connections are pinned to port 443.
-5. **No SSRF oracle**: wire errors never echo resolved IPs, ports, or redirect chains; the
-   diagnosable category goes only to the server-side log.
+5. **No SSRF oracle**: caller-visible errors never echo resolved IPs, ports, or redirect chains;
+   detail sufficient for diagnosis remains available to the RA's operators and is never returned
+   to the caller.
 
 ## 8. Error codes
 
@@ -143,8 +144,7 @@ ANS-0 / the API spec.)
 **Requirement: Optional.** A who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)):
 supporting `did:web` is optional, but an RA that enables it MUST perform every check in §2.
 
-**Status: Active.** Wired (noop resolver for quickstart, hardened web resolver for production),
-tested, sealing real multi-key proofs.
+**Status: Active.** Implemented, tested, sealing real multi-key proofs.
 
 ## 10. Object schemas (worked example)
 
@@ -186,8 +186,10 @@ payload segment **equal to** the served `signingInput`):
 ```
 
 **Sealed proven key** — each `keys[]` entry of the resulting `IDENTITY_VERIFIED` event (the
-verification method quoted verbatim, §8.4 + §4; full envelope in
-[ANS-0 §8.1](../ans-0-identity-anchor.md#81-the-identity-event-family-and-ingest)):
+verification method quoted verbatim under ANS-0 §8.4 and this profile's §4). The full wrapper is
+shown in [ANS-4 example A.1](../examples/ans-4-examples.md#a1-sealed-envelope-and-append-response);
+the identity event fields are defined in
+[ANS-0 §8.1](../ans-0-identity-anchor.md#81-the-identity-event-family-and-ingest):
 
 ```json
 {

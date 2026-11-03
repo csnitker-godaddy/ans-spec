@@ -8,69 +8,31 @@ Audience: implementers building or operating an ANS Registration Authority that 
 
 ## 1. Scope
 
-ANS-3 specifies how a registration's facts surface as DNS records an operator publishes and the RA
-verifies. The record set is composed from a **set of discovery profiles** — named DNS record
-families carried on the registration as `discoveryProfiles`. The bundled set in v0.1.0 is two
-profiles, each defined by one document under [`discovery-profiles/`](discovery-profiles/):
+ANS-3 defines the DNS records an RA generates for a registration, the records its operator
+publishes, and the checks required before activation. Records use the registration's `agentHost`
+or its child labels.
 
-- **`ANS_TXT`** (the [ans-txt profile](discovery-profiles/ans-txt.md)) — the original `_ans` TXT
-  family plus an HTTPS RR. **Opt-in** on the V2 lane, and the family the V1 lane is pinned to. Widely
-  deployed; supported indefinitely.
-- **`ANS_DNSAID`** (the [ans-dnsaid profile](discovery-profiles/ans-dnsaid.md)) — a DNS-AID-aligned
-  SVCB row per protocol endpoint at the bare FQDN, per [RFC 9460](https://www.rfc-editor.org/rfc/rfc9460.html).
-  The **default**: applied when a registration omits `discoveryProfiles`.
+Discovery-profile selection and composition are defined in §6. The supported profiles are
+[ANS_TXT](discovery-profiles/ans-txt.md) (TXT and HTTPS records) and
+[ANS_DNSAID](discovery-profiles/ans-dnsaid.md) (DNS-AID SVCB records); their documents define the
+wire syntax. Both include the family trust records in §6.3.
 
-The core contract here never changes when a profile is added, amended, or retired; per-profile wire
-detail lives in the profile documents. That split is the point of [§6](#6-discovery-profiles).
+[ANS-1](ans-1-registration.md) and [ANS-2](ans-2-versioned-naming.md) govern certificates;
+[ANS-5](ans-5-integrity-monitoring.md) governs ongoing DNS and DANE verification.
 
-ANS-3 defines:
+## 2. DNS record-generation contract
 
-- The `ProfileEmitter` / `ProfileRegistry` code-interface contract: given a `Registration` and the
-  registry of wired profiles, return the records the operator must publish (§2).
-- The record set and child-label structure, including the **family trust records** (`_ans-badge`
-  TXT and the server-cert TLSA) every ANS-family profile shares (§3, §6.3).
-- The activation validations the RA runs against the announced records before a registration
-  transitions from `PENDING_DNS` to `ACTIVE` (§4).
-- The discovery-profile registry, the profile template, and the composition rules — set semantics,
-  registry-wired emission order, dedup, the required-flag transition, and default normalization (§6).
-- The DNS management role split between AHP, RA, and DNS provider (§5).
+A discovery profile is identified by its `DiscoveryProfile` wire value (`ANS_TXT`, `ANS_DNSAID`)
+and defines the records the operator must publish for the registration. For the same registration,
+selected profiles, and TTL policy, the RA MUST produce the same record content, required flags,
+and canonical order, independent of the request order of `discoveryProfiles`. Each selected profile
+alone MUST produce its discovery records and complete shared family trust records (§6.3).
 
-Every record is generated for the agent's `agentHost` — the FQDN primary anchor every registration
-carries ([ANS-1](ans-1-registration.md)) — and the child labels under it.
+The RA MUST compose the selected profiles according to §6.4. The resulting order is preserved in
+`dnsRecordsProvisioned[]` and in byte-identical event retries. Internal interfaces and traversal
+order are implementation-defined.
 
-ANS-3 specifies **DNS record generation and publication orchestration**. DANE verification (the
-verifier-side procedure of validating TLSA records and matching Server Certificates) spans ANS-3 and
-ANS-5. ANS-3 defines the DNS record formats and emission rules; ANS-5 specifies the verifier worker
-procedure that consults those records during verification.
-
-ANS-3 does **not** specify:
-
-- The per-profile wire syntax of the `_ans` TXT records, the HTTPS RR, or the SVCB SvcParams. Those
-  live in the [discovery-profile documents](discovery-profiles/).
-- How the Server Certificate or Identity Certificate is issued. ANS-1 and ANS-2 cover those.
-- The verifier-side DANE verification procedure. That is in ANS-5.
-
-## 2. The `ProfileEmitter` and `ProfileRegistry` interface
-
-A discovery profile is a **`ProfileEmitter`**: `ID()` returns its `DiscoveryProfile` wire identifier
-(`ANS_TXT`, `ANS_DNSAID`), and `Records(reg)` returns the `ExpectedDNSRecord[]` the operator must
-publish for the registration. `Records` is a **pure function** over the registration aggregate — no
-I/O, no context, no error — so two conformant implementations MUST produce the same records modulo
-TTL choice (operator policy). Each profile returns both its own discovery records and any
-family-level trust records it depends on (§6.3), so a profile registered alone produces a complete,
-self-contained set.
-
-The RA composes the per-registration record set by walking a **`ProfileRegistry`** — the set of
-profiles wired into the deployment — and emitting each profile whose `ID()` is present in
-`reg.discoveryProfiles`. The registry is immutable after construction; `IDs()` returns the profiles
-in **wiring order**, which is load-bearing: the composed order is sealed byte-for-byte into the TL as
-`dnsRecordsProvisioned[]`, so wiring order — not request order — fixes the canonical bytes (§6.4).
-
-A stored profile unknown to the running registry (for example, a value left by a rename or a
-profile this deployment does not wire) is **skipped with a WARN, not an error**; a registration
-whose every requested profile is unknown falls back to the default set. The wired profile set MUST
-equal the valid `DiscoveryProfile` enum: drift in either direction fails RA start rather than
-surfacing as a silent verify-dns failure later (§6.4).
+Profile support, request validation, and stored-profile fallback MUST follow §6.4.
 
 ## 3. Record set and child-label structure
 
@@ -143,19 +105,20 @@ above).
 A CNAME at the agent's FQDN blocks apex-level HTTPS and SVCB records (RFC 1034 §3.6.2) but does not
 affect child-label records (`_ans`, `_ans-badge`, `_{port}._tcp`). It therefore blocks the `ANS_TXT`
 HTTPS RR and the `ANS_DNSAID` SVCB row, which both sit at the apex. When the RA detects a CNAME it
-skips the apex record; CNAME flattening by the DNS provider avoids this restriction entirely.
+skips the apex record. CNAME flattening is one possible arrangement that avoids publishing a
+conflicting CNAME (§8.3).
 
 ## 6. Discovery profiles
 
 A registration carries a **set** of discovery profiles in `discoveryProfiles`. Each profile is one
 DNS record family; the bundled set is `ANS_DNSAID` (default) and `ANS_TXT` (opt-in). New families
-plug in as additional `ProfileEmitter` adapters without changing the core contract or the wire.
+define additional profile rules without changing the core composition contract.
 
 `discoveryProfiles` is **set semantics**: when omitted or sent as an empty array it normalizes to
 the default `["ANS_DNSAID"]`; the V1 lane never consults the default and is pinned to `["ANS_TXT"]`
 regardless of request; an operator opts into `ANS_TXT` explicitly, alone or in the
 `["ANS_DNSAID", "ANS_TXT"]` transition union. Request order carries no meaning — emission order is
-the registry's wiring order (§6.4).
+the canonical order in §6.4.
 
 ### 6.1 The discovery-profile registry
 
@@ -167,7 +130,7 @@ mirrors it.
 | `ANS_TXT` | [discovery-profiles/ans-txt.md](discovery-profiles/ans-txt.md) | Optional (opt-in) | `_ans` TXT (one per endpoint) + an HTTPS RR at the FQDN | Active |
 | `ANS_DNSAID` | [discovery-profiles/ans-dnsaid.md](discovery-profiles/ans-dnsaid.md) | Default | SVCB (one per endpoint) at the FQDN, DNS-AID SvcParams | Active |
 
-**Status meanings.** **Active** — wired, tested, emitting real records an operator publishes and the
+**Status meanings.** **Active** — implemented and tested, emitting real records an operator publishes and the
 RA verifies at verify-dns. **Default / Opt-in** is the requirement axis, not the status: both
 profiles are Active; `ANS_DNSAID` is the default set now that the DNS-AID-aligned SVCB shape is at
 conformance, and `ANS_TXT` is opt-in (the operator must name it) — supported indefinitely for
@@ -176,7 +139,7 @@ deprecation signal.
 
 ### 6.2 The profile template
 
-Every discovery-profile document specifies, in this order:
+Every discovery-profile document specifies the following content:
 
 1. Records, labels, and selection.
 2. Record assembly — the exact value form and parameter composition, in order.
@@ -190,13 +153,12 @@ Every discovery-profile document specifies, in this order:
 10. Object schemas — worked record examples.
 
 A profile only ever varies the **discovery records** layered on the shared family trust records
-(§6.3). All profiles share the one composition walker (§6.4) and the one validation flow (§4).
+(§6.3). All profiles follow the same composition rules (§6.4) and activation validations (§4).
 
 ### 6.3 Family trust records
 
-Both ANS-family profiles emit two shared trust records, deduped to a single instance at the
-composition walker (§6.4). They are emitted by whichever profile(s) the registration selects, so a
-profile registered alone still produces them:
+Both ANS-family profiles include the following shared trust records, deduplicated in the composed
+set (§6.4). Each selected profile alone still produces the complete family trust record set:
 
 - **Badge** — `_ans-badge.{agentHost}` TXT, value `v=ans-badge1; version=v{version}; url={badgeURL}`,
   where `{version}` is the registration's semver (the value carries the `v` prefix, matching the ANSName's version segment) and `{badgeURL}` is the
@@ -216,35 +178,31 @@ profile registered alone still produces them:
 
 ### 6.4 Composition: ordering, dedup, and the required-flag transition
 
-The RA composes `dnsRecordsProvisioned[]` by walking the registry:
+The composed `dnsRecordsProvisioned[]` MUST satisfy these rules:
 
-1. **Resolve the set.** Filter `reg.discoveryProfiles` to the profiles the registry has wired.
-   Empty after filtering (the field was omitted, or every entry was unknown to the registry)
-   normalizes to the default `["ANS_DNSAID"]`. An unknown stored profile is skipped with a WARN; an
-   all-unknown request falls back to the default with a distinct WARN so it is not mistaken for an
-   operator zone error at verify-dns.
-2. **Walk in wiring order.** Iterate the registry's `IDs()` (the bundled wiring is
-   `[ANS_TXT, ANS_DNSAID]`, so emission proceeds TXT-first, then SVCB) and collect each resolved
-   profile's full record list. Request order on `discoveryProfiles` has no effect.
-3. **Dedup by `(name, type, value)`.** The family trust records (`_ans-badge`, the Server TLSA)
-   that overlap across sibling profiles emit once; first-seen wins. The dedup key omits `Required`,
-   so sibling profiles MUST agree on the flag for a shared record (both do — badge `true`, TLSA
-   `false`).
-4. **Group discovery-then-trust.** Discovery records first (in walker order), then the trust records
-   (badge, TLSA). The canonical wire order for the union case is `[TXT×N, HTTPS, SVCB×N, badge,
-   TLSA]`; this pins the TL `dnsRecordsProvisioned[]` canonical bytes.
-5. **Required-flag transition.** SVCB rows arrive from the `ANS_DNSAID` adapter with
-   `Required=true`. When `ANS_TXT` is also in the resolved set, every SVCB row is flipped to
-   `Required=false`: in the transition union the `_ans` TXT family carries the operator's
-   required signal and SVCB rides along as optional — SVCB presence is only enforced for
-   sole-`ANS_DNSAID` registrations.
+1. **Resolved profile set.** Unknown profiles in stored registrations are omitted. An omitted or
+   empty set, including an all-unknown stored set, normalizes to `["ANS_DNSAID"]`. Partial omission
+   and all-unknown fallback MUST be diagnosable and distinguishable to the operator.
+2. **Unique records.** The composed set MUST contain one entry per distinct `(name, type, value)`.
+   Profiles producing the same record MUST agree on its `Required` flag: the shared badge is
+   required and TLSA records are optional (§6.3).
+3. **Canonical order.** Records MUST appear in this order: `ANS_TXT` TXT records in endpoint order,
+   its HTTPS record, `ANS_DNSAID` SVCB records in endpoint order, the badge, then TLSA records in
+   ascending distinct endpoint-port order. Records not emitted under the selected profiles or
+   registration's applicable rules are omitted. Request order on `discoveryProfiles` has no effect.
+   This order MUST be preserved in the sealed `dnsRecordsProvisioned[]` and event retries.
+4. **Required flags.** SVCB records MUST have `Required=true` when `ANS_DNSAID` is the sole resolved
+   profile and `Required=false` when the resolved set also includes `ANS_TXT`. The union's `_ans`
+   TXT records remain required. Family record flags remain as specified in §6.3.
 
 **Validation.** Each `discoveryProfiles` element MUST be a valid `DiscoveryProfile`; an unrecognized
 value is rejected at the API boundary with `422 INVALID_DISCOVERY_PROFILE`. Duplicate elements are
 deduped (first occurrence wins) and an empty array normalizes to the default — the OpenAPI
 `minItems: 1` and `uniqueItems: true` are the canonical client contract, which the server normalizes
-rather than rejecting. The wired registry and the valid `DiscoveryProfile` enum MUST be identical;
-the RA asserts this coherence at server start and refuses to start on drift.
+rather than rejecting. Every profile permitted by the `DiscoveryProfile` API contract MUST be
+supported for record generation and verification, and every generated profile MUST be permitted by
+that contract. The RA MUST NOT serve registration operations under an inconsistent configuration
+and MUST make inconsistencies diagnosable to its operator.
 
 ## 7. DNS verification modes
 
@@ -296,11 +254,12 @@ and content are otherwise correct.
 
 ### 8.3 CNAME blocking at the FQDN
 
-A CNAME at `agentHost` blocks apex-level HTTPS and SVCB records (RFC 1034 §3.6.2). The `ANS_DNSAID`
-SVCB row and the `ANS_TXT` HTTPS RR both sit at `agentHost` and are therefore blocked when a CNAME is
-present. Operators that need both a CNAME (for example, a CDN front-end) and an apex record MUST use
-CNAME flattening at the DNS provider; most major managed-DNS providers support it. The `_ans` TXT
-child label is unaffected, so `ANS_TXT` discovery still functions behind an apex CNAME.
+An owner name publishing SVCB or HTTPS records MUST NOT also publish a CNAME, in accordance with
+RFC 1034 §3.6.2. The `ANS_DNSAID` SVCB row and the `ANS_TXT` HTTPS RR both sit at `agentHost`.
+Operators requiring aliasing behavior MUST choose a DNS arrangement that preserves the required
+ANS records without a conflicting CNAME at `agentHost`. CNAME flattening is one possible
+arrangement. A CNAME at `agentHost` does not affect the separate `_ans` child label, so `ANS_TXT`
+discovery still functions behind an apex CNAME.
 
 ### 8.4 Coexistence with other DNS records under the same FQDN
 
@@ -317,8 +276,8 @@ agent-discovery specs (AID, DN-ANR, AgentDNS, ADS) publish under different under
 
 A conformant ANS-3 implementation:
 
-1. Exposes one or more `ProfileEmitter`s composed through a `ProfileRegistry`; each `Records(reg)`
-   is a pure function over the registration aggregate, and the RA composes them per the rules in §6.4.
+1. Produces deterministic record content, required flags, and canonical order under §2 and
+   composes the selected profiles per §6.4.
 2. Defaults `discoveryProfiles` to `["ANS_DNSAID"]` when the field is omitted or empty, pins the V1
    lane to `["ANS_TXT"]` (the V1 lane never consults the default), treats `ANS_TXT` as opt-in, and
    supports the `["ANS_DNSAID", "ANS_TXT"]` union. All paths are conformant; `ANS_DNSAID` is the
@@ -330,8 +289,8 @@ A conformant ANS-3 implementation:
    profiles.
 5. For `ANS_DNSAID`, emits one SVCB row per endpoint at the FQDN with the DNS-AID SvcParams in the
    RFC 9460 §14.3.1 Private Use `keyNNNNN` presentation form, never the named DNS-AID forms.
-6. Validates `discoveryProfiles` (`INVALID_DISCOVERY_PROFILE` on an unknown element) and asserts
-   registry/enum coherence at server start.
+6. Validates `discoveryProfiles` (`INVALID_DISCOVERY_PROFILE` on an unknown request element),
+   preserves the stored-profile fallback and diagnostics, and enforces profile support under §6.4.
 7. Honors the per-version TTL parameter from operator policy.
 8. Operates in lookup-mode for any deployment exposed to external verifiers; declares noop-bypass
    mode explicitly when used.
@@ -347,7 +306,7 @@ an operator chose `ANS_TXT` over `ANS_DNSAID` (or vice versa).
 
 - ANS-1 specification: [`ans-1-registration.md`](ans-1-registration.md). Registration aggregate, revocation cleanup.
 - ANS-2 specification: [`ans-2-versioned-naming.md`](ans-2-versioned-naming.md). Version coexistence rules.
-- ANS-5 specification: [`ans-5-integrity-monitoring.md`](ans-5-integrity-monitoring.md). Verifier worker procedure consuming DNS records.
+- ANS-5 specification: [`ans-5-integrity-monitoring.md`](ans-5-integrity-monitoring.md). Verification procedure consuming DNS records.
 - Discovery profiles: [`discovery-profiles/`](discovery-profiles/) — [ANS_TXT](discovery-profiles/ans-txt.md), [ANS_DNSAID](discovery-profiles/ans-dnsaid.md).
 - [RFC 1034](https://www.rfc-editor.org/rfc/rfc1034): DNS concepts (CNAME blocking).
 - [RFC 1035](https://www.rfc-editor.org/rfc/rfc1035): DNS implementation (TXT, label limits).

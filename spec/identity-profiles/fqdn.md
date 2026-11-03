@@ -7,10 +7,9 @@ Version: 0.1.0
 Date: 2026-06-23
 Audience: implementers building an ANS-conformant Registration Authority
 
-The `fqdn` profile is the archetype of the proof-of-control gate ([ANS-0 §3](../ans-0-identity-anchor.md#3-the-proof-of-control-gate))
-— the one ANS generalizes from. It is **not** a Verified Identity (the who); it is the agent's
-mandatory **primary anchor** (the what, [ANS-0 §9](../ans-0-identity-anchor.md#9-the-who-the-what-and-the-fqdn-primary-anchor)),
-proven on the agent-registration path, not through the `/v2/ans/identities` API.
+The `fqdn` profile proves an agent's mandatory primary anchor on the ANS-1 registration path
+([ANS-0 §9](../ans-0-identity-anchor.md#9-the-who-the-what-and-the-fqdn-primary-anchor)). It is not a
+Verified Identity and is not registered through `/v2/ans/identities`.
 
 ## 1. Identifier form, canonicalization, selection
 

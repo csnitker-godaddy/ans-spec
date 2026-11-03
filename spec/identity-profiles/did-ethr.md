@@ -48,8 +48,7 @@ codec differs).
   gateway resolution, if supported, is itself a registrant-steered fetch and MUST be hardened like
   did:web.
 - **What gates promotion**: a secp256k1/Keccak proof verifier (EIP-191 + EIP-712), an ERC-1271
-  `eth_call` path, a pinned-RPC resolver behind the port, and tests against real chain reads (the
-  `scripts/poc/ethid` proof-of-concept established feasibility against live Ethereum + DNS).
+  `eth_call` path, a pinned-RPC resolver, and tests against real chain reads.
 
 Note: EIP-712 typed-data binding is preferred over `personal_sign` because the structured domain
 (`EIP712Domain`) gives a second, wallet-visible domain separation on top of ANS's `purpose`.

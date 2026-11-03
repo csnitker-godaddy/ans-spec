@@ -18,7 +18,7 @@
     },
     "status": {
       "type": "string",
-      "description": "TL-assigned envelope status. Not constrained here; the authoritative, computed identity status is derived at read time (ANS-0 §8.2–§8.3)."
+      "description": "TL-assigned envelope status. Not constrained here; the authoritative identity status is derived from the sealed event history under ANS-0 §8.2–§8.3."
     }
   },
   "definitions": {

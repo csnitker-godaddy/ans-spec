@@ -13,10 +13,8 @@ endpoint at the agent's FQDN, using DNS-AID draft-02 parameters and the family t
 
 ## 1. Records, labels, and selection
 
-- **Selection**: the `ANS_DNSAID` token in the registration's `discoveryProfiles` set. It is the
-  default — a registration that omits `discoveryProfiles` or sends an empty array resolves to
-  `["ANS_DNSAID"]`; the V1 lane never consults the default and is pinned to `ANS_TXT`
-  ([ANS-3 §6.4](../ans-3-dns-publication.md#64-composition-ordering-dedup-and-the-required-flag-transition)).
+- **Selection**: the `ANS_DNSAID` token in `discoveryProfiles`; the default when the set is omitted or
+  empty ([ANS-3 §6.4](../ans-3-dns-publication.md#64-composition-ordering-dedup-and-the-required-flag-transition)).
 - **Records** (one per endpoint, emitted only when the registration has at least one endpoint):
   one **SVCB** row at the bare `{fqdn}` (apex), in ServiceMode.
 - Plus the family trust records — `_ans-badge` TXT and the server-cert TLSA (ANS-3 §6.3). This
@@ -41,32 +39,24 @@ One SVCB row per endpoint, value composed in **ascending SvcParamKey order**:
 - `key65401={cap-sha256}` (DNS-AID `cap-sha256`) — `base64url(raw SHA-256)` of the endpoint's
   metadata document, derived from the endpoint's `metadataHash`. Absent when no hash is supplied
   (or it is malformed).
-- `key65402={token}` (DNS-AID `bap`) — the agent protocol, emitted on **every** row. It currently
-  equals `alpn`, but DNS-AID consumers read `bap` as the authoritative agent-protocol field, so it
-  is always present.
+- `key65402={token}` (DNS-AID `bap`) — the agent protocol, emitted on **every** row.
 - `key65409={wk-suffix}` (DNS-AID `well-known`) — the RFC 8615 suffix derived from `metadataUrl`,
   emitted **only** when the `metadataUrl` sits at `https://{fqdn}/.well-known/{suffix}` (§3).
 
 **Private-Use presentation form is mandatory.** The DNS-AID draft's named params
 (`cap` / `cap-sha256` / `bap` / `well-known`) have no IANA-assigned code point, so they MUST be
-emitted in the `keyNNNNN` presentation form (RFC 9460 §2.1). The named forms are unpublishable: the
-zone parsers and managed-DNS providers in the path reject `cap=` / `bap=` with "bad SVCB key", and a
-lookup verifier only ever observes live records in `keyNNNNN` form. `key65400`–`key65409` sit in the
+emitted in the `keyNNNNN` presentation form (RFC 9460 §2.1). `key65400`–`key65409` sit in the
 RFC 9460 §14.3.1 Private Use range (65280–65534) and match DNS-AID draft-02 §4's IANA-Considerations
 assignments.
 
-**Deliberately not emitted.** `mandatory=` — marking any of these keys mandatory would make the
-whole record invisible to every generic RFC 9460 client that does not understand the key, defeating
-the §8 coexistence goal. `ipv4hint` / `ipv6hint` — the RA knows endpoint URLs, not addresses;
-registry-sourced address hints go stale and are out of scope.
+`mandatory=`, `ipv4hint`, and `ipv6hint` are not emitted (`mandatory=` would hide the record from
+generic RFC 9460 clients).
 
 ## 3. Parameter sources and selection
 
 - `alpn` / `bap` ← the endpoint's protocol, mapped to the DNS-AID token: `A2A`→`a2a`, `MCP`→`mcp`,
-  `HTTP_API`→`x-http`. The `x-` prefix makes the HTTP token a valid DNS-AID draft-02
-  `extension-protocol` (`a2a` / `mcp` are the built-in protocols; everything else MUST be
-  `x-`-prefixed). `ANS_TXT` uses `http-api` for the same protocol — the two families diverge on the
-  HTTP token only.
+  `HTTP_API`→`x-http` (DNS-AID built-ins are `a2a`/`mcp`; every other token MUST be `x-`-prefixed;
+  `ANS_TXT` uses `http-api` for the same protocol).
 - `port` ← the endpoint URL authority; `443` (https) / `80` (http) default. An out-of-range port is
   rejected at registration (`INVALID_ENDPOINT`).
 - `key65400` (cap) ← the endpoint's `metadataUrl`, emitted verbatim.
@@ -75,12 +65,7 @@ registry-sourced address hints go stale and are out of scope.
 - `key65409` (well-known) ← derived from the `metadataUrl` path, and only when the URL is exactly
   `https://{fqdn}/.well-known/{suffix}`: same scheme (https), same host as the agent FQDN
   (port-, case-, and trailing-dot-insensitive), and a single non-empty trailing path segment. Any
-  other shape omits the SvcParam — the advertised well-known location is always derived from where
-  the metadata document actually lives, never from the protocol.
-
-The `cap` / `cap-sha256` pair locates and digests the **per-endpoint** metadata document (the A2A
-AgentCard, the MCP ServerCard — DNS-AID's per-service capability descriptor), one descriptor per
-SVCB row.
+  other shape omits the SvcParam.
 
 ## 4. Required flag and TL seal
 
@@ -92,43 +77,30 @@ SVCB row.
 
 Every emitted record carries TTL `3600`. The composed set is sealed verbatim into the
 `AGENT_REGISTERED` attestation's `dnsRecordsProvisioned[]`
-([ANS-3 §3](../ans-3-dns-publication.md#3-record-set-and-child-label-structure)).
+([ANS-3 §3](../ans-3-dns-publication.md#3-record-set-and-child-label-structure)). A Private-Use key
+collision with an unrelated use of the same code point can only cause a false negative at
+verify-dns, never a false accept.
 
 ## 5. Freshness and ANS-5 monitoring
 
-ANS-5's DNS-pointer check re-queries the SVCB row and validates DNSSEC
-where the zone is signed. The verifier compares the expected SvcParams against the live record by
-value-equality; because the comparison requires equal values, a Private-Use key collision with an
-unrelated experiment that picked the same code point can only cause a false negative (verify-dns
-fails), never a false accept.
+ANS-5's DNS check re-queries the SVCB row and compares the expected SvcParams to the live record by
+value equality ([ANS-5 §4](../ans-5-integrity-monitoring.md#4-verification-checks)).
 
 ## 6. Lifecycle specifics
 
-The SVCB rows are per-registration: one row per endpoint for the registration's version. Version
-coexistence across registrations and revocation cleanup are ANS-1/ANS-2 concerns
-([ANS-1 §7](../ans-1-registration.md#7-lifecycle-operations)); on revocation of the last ACTIVE
-version the AHP removes the SVCB and family records the RA's revocation response lists.
+Records are per-registration; on revocation the AHP removes the records the RA's response lists
+([ANS-1 §7](../ans-1-registration.md#7-lifecycle-operations)).
 
 ## 7. Coexistence and presentation safety
 
-- **CNAME at the apex** blocks the SVCB row (RFC 1034 §3.6.2). Operators requiring aliasing behavior
-  MUST choose a DNS arrangement that preserves the required SVCB record without publishing a
-  conflicting CNAME at `agentHost`. CNAME flattening is one possible arrangement (ANS-3 §8.3).
-- **RFC 9460 §8 unknown-key handling** — generic SVCB clients and sibling agent-discovery drafts
-  ignore SvcParams they do not recognize rather than fail closed, so ANS SvcParams coexist with
-  others on the same row (ANS-3 §8.4).
+- A CNAME at the apex blocks the SVCB row (ANS-3 §8.3).
+- Generic SVCB clients ignore SvcParams they do not recognize (RFC 9460 §8), so ANS SvcParams coexist
+  with others on the row.
 - **Presentation safety** — `metadataUrl` is validated at registration to be an `https` URL,
   ≤2048 characters, and free of every byte the SVCB presentation format escapes (whitespace, double
   quote, backslash, semicolon, and non-printable ASCII) in **both** the raw URL (which feeds `cap`)
   and its percent-decoded path (which feeds `well-known`). A violation is rejected with
-  `INVALID_ENDPOINT`. The published SvcParam values remain byte-identical to the expected values,
-  so a stray byte cannot inject a bogus SvcParam into the producer-signed attestation or strand the
-  agent in `PENDING_DNS`.
-- **Private-Use range caveat** — collision with another experiment on the same code points is
-  intrinsic to Private Use but bounded to denial-of-verification (a false negative; never a false
-  accept, §5). If these params are IANA-registered later, switching the presentation form back to
-  named keys is a real operator-facing migration (the published record value changes), not a silent
-  swap.
+  `INVALID_ENDPOINT`.
 
 ## 8. Error codes
 
@@ -137,13 +109,9 @@ version the AHP removes the SVCB and family records the RA's revocation response
 | `INVALID_ENDPOINT` | `metadataUrl` not https / over 2048 chars / carrying SVCB-unsafe bytes (raw or decoded path); `metadataHash` not `SHA256:<64 hex>`; `metadataHash` supplied without `metadataUrl`; `agentUrl` port outside 1–65535 |
 | `INVALID_DISCOVERY_PROFILE` | (core) a `discoveryProfiles` element naming no supported profile (ANS-3 §6.4) |
 
-A verify-dns mismatch keeps the registration in `PENDING_DNS` and the operator reconciles by
-publishing the announced record (ANS-3 §4); it is not a distinct error code.
-
 ## 9. Status and requirement
 
-**Requirement: Default on V2.** Selection and V1 compatibility are defined in §1; required flags
-are defined in §4. Records MUST use the exact §2 form, including the Private-Use `keyNNNNN` keys.
+**Requirement: Default on V2.**
 
 **Status: Active.** Implemented and tested, emitting the SVCB records verified at verify-dns.
 
@@ -164,7 +132,4 @@ _ans-badge.agent.example.com. 3600 IN TXT   "v=ans-badge1; version=v1.0.0; url=h
 _443._tcp.agent.example.com.  3600 IN TLSA  3 0 1 {server-cert-sha256}
 ```
 
-The MCP row carries `alpn` / `port` / `bap` only: no `metadataUrl` means no `key65400` (cap) and no
-`key65409` (well-known), and no `metadataHash` means no `key65401` (cap-sha256). An off-`/.well-known/`
-`metadataUrl` (e.g. `https://agent.example.com/metadata/mcp.json`) would emit `key65400` but omit
-`key65409`. The sealed `dnsRecordsProvisioned[]` entry's `purpose` is `DISCOVERY` for the SVCB row.
+The sealed `dnsRecordsProvisioned[]` entry's `purpose` is `DISCOVERY` for the SVCB row.

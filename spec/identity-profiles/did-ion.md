@@ -10,7 +10,7 @@ Audience: implementers evaluating future identifier kinds
 > **Deferred.** Intended shape only. Ships when an ION resolver, tests, and node plumbing are
 > real; until then `IDENTIFIER_KIND_UNSUPPORTED` (ANS-0 §10.1). No placeholder seal.
 
-**Requirement: Optional** — a who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)), like every who-profile.
+**Requirement: Optional** ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)).
 
 `did:ion` is a Sidetree-based, Bitcoin-anchored DID method. Like [`did:web`](did-web.md) and
 [`did:plc`](did-plc.md) it is a JWS-scheme, multi-key, fetch-based kind; it differs only in the
@@ -31,9 +31,3 @@ resolution backend (a Sidetree/ION node) and the long-form vs short-form DID han
 - **SSRF**: ION node resolution is an egress dependency. Pin to a configured, trusted resolver
   endpoint; if a registrant-supplied node URL is ever accepted, harden exactly like did:web
   (denylist, pinning, bounds, no oracle).
-- **What gates promotion**: an ION resolver (long-form self-resolution + node reconciliation),
-  tests, and the node egress path settled.
-
-Open question: whether to accept long-form DIDs that are not yet anchored on Bitcoin (usable but
-not yet tamper-anchored) or to require anchoring before VERIFIED — the latter is stronger but adds
-unbounded confirmation latency to the proof path.

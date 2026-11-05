@@ -152,7 +152,7 @@ Decoded payload:
 `htu` is the normalized target (lowercased scheme/host, default port dropped, no query or
 fragment); `ath` is `base64url(SHA-256(access token))` and is present only because the request
 carries `Authorization: DPoP`; `ans_content_digest` is `base64url(SHA-256(content))` over the
-46 body octets shown (§7.13). The callee verifies the proof, binds it to the status token and
+46 body octets shown (§7.12). The callee verifies the proof, binds it to the status token and
 receipt, verifies the content digest, records the `jti`, checks the access token's `cnf.jkt`
 against the proof key's RFC 7638 thumbprint while validating the token, and only then authorizes
 and processes the request.

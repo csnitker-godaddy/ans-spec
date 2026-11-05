@@ -19,30 +19,26 @@ ANS-5 specifies:
 - The transient-vs-mismatch distinction the AIM MUST observe.
 - The principal-binding verification procedures for DID_WEB, LEI, BIOMETRIC_HASH, ENS_ENSIP25, and ENS_ENSIP26 binding types.
 
-ANS-5 is **profile-agnostic and DNS-profile-agnostic by construction**. The same checks run
-across registrations regardless of anchor profile; against the `ANS_TXT` `_ans` TXT family, against
-the `ANS_DNSAID` SVCB profile, against agents with no DNS at all. The AIM consults the relevant ANS-3
-discovery profile through the DNS record-generation and composition rules
-([ANS-3 §6](ans-3-dns-publication.md#6-discovery-profiles)) for expected DNS state. **Verified
-Identities** (the *who*, [ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object)) are
-monitored on their own per-identity cadence (§4.3), independently of the agents that link them.
+The AIM derives expected DNS state from the registration's discovery profiles
+([ANS-3 §6](ans-3-dns-publication.md#6-discovery-profiles)) and runs the same checks regardless of
+anchor or discovery profile. Verified Identities
+([ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object)) are monitored on their own
+per-identity cadence (§4.2).
 
 ANS-5 does **not**:
 
-- Score, rank, or filter agents. Trust scoring is out of scope for ANS and lives in a separate
-  `ti-*` layer set. The clean separation matters because some deployments want verification (am I
-  being lied to?) without scoring (is this the best one?), and others want both. ANS-5's verb is
-  **verify**. A conforming AIM MAY be composed into a larger system that also performs scoring,
-  provided the scoring function does not influence verification outcomes.
-- Issue revocations or command state changes. Findings are reports; the RA decides what to do with them. ANS-1 specifies the warning event the RA emits when a finding clears quorum; the agent stays ACTIVE. Revocation only happens through the RA's own decision per ANS-1.
-- Specify grade-tier rules for principal bindings. ANS-5 specifies *how* to verify each binding type; *which* bindings are acceptable *when* is grade-tier policy that lives outside ANS.
+- Score, rank, or filter agents (trust scoring is outside ANS). A conforming AIM MAY be composed
+  into a larger system that also performs scoring, provided the scoring function does not
+  influence verification outcomes.
+- Issue revocations or command state changes. Findings are reports; the RA decides what to do with them.
+- Define which bindings are acceptable when.
 
 ## 2. Terminology
 
 - **AIM (Agent Integrity Monitor)**: the service performing integrity checks. Monitoring MUST operate independently of the RA's request path; findings reach consumers through an implementation-defined integration.
 - **Verification record**: the typed result of one verification cycle for one registration. Carries per-check outcomes, an evidence pointer, and a timestamp.
-- **Evidence pointer**: an inline bundle or content-addressed reference to the network captures, certificate samples, DNS query traces, and external resolution responses the AIM gathered while verifying. Verifiers consuming an `INTEGRITY_WARNING` event can re-verify against the evidence bundle.
-- **Finding**: a verification record where one or more checks failed. Findings are surfaced per the integrity-reporting principles (§7).
+- **Evidence pointer**: an inline bundle or content-addressed reference to the network captures, certificate samples, DNS query traces, and external resolution responses the AIM gathered while verifying.
+- **Finding**: a verification record where one or more checks failed. Findings are surfaced per the integrity-reporting principles (§6).
 - **Mismatch vs. unreachable**: `Mismatch` means the content has changed (remediation needed); `Unreachable` means a transient network failure (retry later). Conflating the two would let a network glitch trigger suppression of a legitimate agent.
 
 ## 3. Verification results
@@ -55,7 +51,7 @@ are implementation-defined.
 
 ## 4. Verification checks
 
-The AIM verifies each ACTIVE registration independently. A third party must detect misissuance, drift, or compromise without insider access to the registry; the verification checks below implement this through independent trust channels (PKI, DNS/DNSSEC, TL).
+The AIM verifies each ACTIVE registration independently.
 
 | Check | What the AIM does | Pass condition | Required when |
 | --- | --- | --- | --- |
@@ -75,34 +71,20 @@ The AIM verifies each ACTIVE registration independently. A third party must dete
 
 **DNS pointer content matching.** "Records exist and validate" means: (1) the record exists at the authoritative nameserver, (2) its content matches the TL-sealed expected value, and (3) the record's DNSSEC validation state is secure when the zone is signed. A record that exists but whose content does not match the sealed value is a `Mismatch` finding.
 
-The verification record records which checks fired; downstream consumers react per their own policy.
-
-**Identity certificate verification note.** The identity certificate is typically a client
-certificate not presented during a standard TLS handshake to the operational endpoint. Runtime
-re-verification of the identity certificate fingerprint requires a dedicated identity presentation
-protocol not currently defined in ANS. Implementations SHOULD record the identity certificate type
-as evidence; fingerprint re-verification is deferred to a future ANS extension. This check does not
-contribute to conformance level determination until such an extension is published.
+**Identity certificate verification note.** Runtime re-verification of the identity-certificate
+fingerprint requires a presentation protocol ANS does not define; implementations SHOULD record the
+certificate type as evidence and treat this check as deferred.
 
 ### 4.1 Check severity
 
-A conforming implementation MAY assign severity tiers to checks:
+An AIM MAY classify checks as verdict-determining (contribute to FAIL) or evidence-only and MUST
+document which. An aggregate PASS/FAIL verdict is not trust scoring.
 
-- **Verdict-determining** (fail-closed): a failure contributes to an overall FAIL verdict.
-- **Evidence-only** (fail-open): a failure is reported but does not change the overall verdict.
-
-The severity assignment is implementation-defined. Implementations MUST document which checks are verdict-determining. An implementation MAY produce an aggregate verdict (PASS/FAIL) from its verdict-determining checks without violating the "does not score" principle — a verification verdict is distinct from trust scoring.
-
-### 4.2 Domain lifecycle monitoring
-
-The AIM MAY monitor NS record changes for registered agents' domains. NS record changes indicate a potential provider migration and produce findings.
-
-### 4.3 Verified-identity monitoring
+### 4.2 Verified-identity monitoring
 
 This section applies only to the optional
 [Verified Identity capability](ans-0-identity-anchor.md#122-optional-capability-verified-identities).
-Each identity is monitored on its own cadence: the AIM probes the identity once and applies the
-result to every linked agent's view, rather than probing it separately for each agent.
+Each identity is monitored on its own cadence.
 
 The per-identity check is **sealed-vs-live key drift**: the AIM re-resolves the identifier
 through its [identity profile](identity-profiles/)'s key source (re-fetch the `did:web` document,
@@ -112,28 +94,22 @@ longer published, an unreachable document, or a key rotation that abandons the p
 finding. `did:key` cannot drift (the key is the identifier) so its only monitored transition is
 revocation.
 
-As everywhere in ANS-5, a drift finding is a **report, not a revocation**: the RA decides. Read-side revocation terminality ([ANS-0 §8.3](ans-0-identity-anchor.md#83-read-side-revocation-terminality)) is independent of monitoring — a revoked identity stays revoked on the public surface regardless of what a later probe sees.
+Read-side revocation terminality ([ANS-0 §8.3](ans-0-identity-anchor.md#83-read-side-revocation-terminality)) is independent of monitoring — a revoked identity stays revoked on the public surface regardless of what a later probe sees.
 
 ## 5. Verification procedure (verifier-facing)
 
-A verifier checks an agent through independent steps, each using a different trust channel. The cryptographic verification path is profile-agnostic; the per-step checks reduce to per-kind calls into the relevant ANS-0 profile (the §3 proof-of-control gate / the profile's key source).
+A verifier checks an agent through independent steps, each using a different trust channel.
 
 | Step | Check | Trust channel | What it proves |
 | --- | --- | --- | --- |
 | 1 | PKI certificate validation | CA system | Standard TLS. Cannot detect a compromised CA |
-| 2 | DANE record validation (FQDN anchors) | DNS (DNSSEC) | The Server Certificate fingerprint matches the TLSA record at `_{port}._tcp.{agentHost}` for the endpoint's port ([ANS-3 §6.3](ans-3-dns-publication.md#63-family-trust-records)). A compromised CA alone cannot forge this record |
+| 2 | DANE record validation (FQDN anchors) | DNS (DNSSEC) | The Server Certificate fingerprint matches the TLSA record at `_{port}._tcp.{agentHost}` for the endpoint's port ([ANS-3 §6.3](ans-3-dns-publication.md#63-family-trust-records)). A compromised CA alone cannot forge this record (TLSA parameters and the DNSSEC prerequisite: [ANS-3 §6.3](ans-3-dns-publication.md#63-family-trust-records), [ANS-6 §5.3](ans-6-agent-authentication.md#53-danetlsa-optional-both-tiers)) |
 | 3 | TL inclusion proof verification | TL (signed by a trusted TL key distributed through `/root-keys`) | The inclusion proof confirms the registration was sealed into the log. A tampered or deleted entry breaks the proof |
 | 4 | Live state match | DNS + TLS | The current DNS records and certificates match what was sealed |
 
-**TLSA parameters.** The RA specifies `TLSA 3 0 1 [sha256_hash]`: DANE-EE (usage 3), full Server Certificate (selector 0), SHA-256 (matching type 1). Selector 0 produces the same hash as the badge fingerprint in the TL, so a single SHA-256 computation of the Server Certificate serves both DANE and badge verification.
+## 6. Integrity reporting principles
 
-**DNSSEC prerequisite for step 2.** DANE requires DNSSEC. Per RFC 6698 §4, a TLSA RRset whose DNSSEC validation state is not "secure" MUST be treated as unusable, and the client falls back to standard PKIX certificate validation. Without DNSSEC in the agent's zone, a client cannot verify the TLSA record, so the DANE and TL verification channels are unavailable to that client. The RA SHOULD verify
-DNSSEC status before provisioning TLSA records.
-
-
-## 7. Integrity reporting principles
-
-The AIM is external to the RA. A malicious monitor could try to suppress valid agents by publishing false failure reports, poisoning trust in the ecosystem. Four principles guard against this:
+The AIM is external to the RA. Principles:
 
 | Principle | Rule |
 | --- | --- |
@@ -142,36 +118,15 @@ The AIM is external to the RA. A malicious monitor could try to suppress valid a
 | **Quorum before action** | The RA MUST NOT act on an unconfirmed finding. Quorum MAY be satisfied by corroboration from independent monitors, internal re-verification, or other confirmation mechanisms |
 | **Evidence MUST be verifiable** | Every finding MUST include cryptographic proof of the discrepancy. The RA re-verifies independently before sealing an `INTEGRITY_WARNING` |
 
-The RA's remediation scope is infrastructure integrity: do the live DNS records and Server Certificate match what the RA sealed? The RA does not evaluate an agent's behavior or quality.
+The AIM MUST make findings and evidence available through an implementation-defined integration. A
+confirmed finding is advisory: the agent stays `ACTIVE`, and any suppression is a consumer policy
+choice, not a registry state change.
 
-### 7.1 Warning, not state change
+## 7. Conformance
 
-The AIM MUST make findings and associated evidence available to consumers through an
-implementation-defined integration. Its authority remains limited to reporting: it MUST NOT
-command RA state changes, and the RA MUST independently verify findings under §7 before acting.
-
-When a finding meets the quorum requirement, consumers of the finding take action per their own policy. The agent remains `ACTIVE` — a confirmed finding is an advisory signal, not a state change. When the discrepancy clears, the finding is resolved.
-
-A consumer's discovery service MAY suppress agents with unresolved warnings; the suppression is a consumer policy choice, not a state change inside the registry or a command issued to the RA. The RA publishes facts; consumers react.
-
-## 8. Conformance
-
-A conformant ANS-5 implementation:
-
-1. Produces verification results meeting §3 for any combination of ANS-0 anchor profile and ANS-3 DNS profile.
-2. Implements every check in the verification-checks section that applies to the input registration.
-3. Distinguishes `Unreachable` from `Mismatch` per the terminology section and never raises an `Unreachable` as a finding.
-4. Does not issue revocations or commit state changes; produces verification records only.
-5. Does not score, rank, or filter agents; emits per-check results only (per the scope section).
-6. Honors the integrity-reporting principles.
-7. Marks records as `degraded` when the underlying ANS-0 claim was retrieved via the soft-stale fallback.
-
-
-**Optional surface.** Per-binding-type verification coverage (each row in the verification-checks
-section fires only when the registration carries the corresponding binding); AIM verification
-cadence is operator-defined. A conforming verifier MUST NOT downgrade integrity scoring solely
-because a registration omits an optional binding type, and MUST NOT reject a `VerificationRecord`
-because the AIM omitted an unavailable check.
+A conformant ANS-5 implementation implements §3–§6 and produces verification results meeting §3 for
+any combination of ANS-0 anchor profile and ANS-3 DNS profile. A conforming verifier MUST NOT
+reject a `VerificationRecord` because the AIM omitted an unavailable check.
 
 **Conformance levels.** Implementations declare their conformance level:
 
@@ -179,26 +134,22 @@ because the AIM omitted an unavailable check.
 - **Level 2 (Extended)**: Level 1 plus Schema integrity and TL inclusion proof cryptographic verification.
 - **Level 3 (Full)**: Level 2 plus all applicable principal-binding checks and On-chain identity. Level 3 requires protocol extensions not universally deployed; implementations declare which Level 3 checks they support.
 
-## 10. Security considerations
+## 8. Security considerations
 
-### 10.1 Soft-stale claim handling
+### 8.1 Evidence-pointer integrity
 
-When a verifier accepts a soft-stale ANS-0 claim, the resulting verification record carries `degraded: true`. Verifiers handling high-stakes transactions SHOULD refuse a degraded record entirely.
-
-### 10.2 Evidence-pointer integrity
-
-The evidence bundle the AIM links to is itself subject to tampering. A finding that survives RA re-verification does not require the operator to re-fetch the evidence bundle, because the RA's independent re-check is the binding step. Verifiers consuming `INTEGRITY_WARNING` events and seeking to inspect evidence SHOULD verify the evidence bundle's signature against the AIM's published key before
+The evidence bundle the AIM links to is itself subject to tampering. Verifiers consuming `INTEGRITY_WARNING` events and seeking to inspect evidence SHOULD verify the evidence bundle's signature against the AIM's published key before
 relying on its contents.
 
 ## Appendix A: Worked examples
 
 Non-normative worked example (AIM finding payload) lives at [`examples/ans-5-examples.md`](examples/ans-5-examples.md).
 
-## 13. References
+## 9. References
 
 - ANS-0 specification: [`ans-0-identity-anchor.md`](ans-0-identity-anchor.md). The proof-of-control gate, the Verified Identity object and its monitoring, the [identity profiles](identity-profiles/).
 - ANS-1 specification: [`ans-1-registration.md`](ans-1-registration.md). Registration aggregate, lifecycle, event set.
 - ANS-3 specification: [`ans-3-dns-publication.md`](ans-3-dns-publication.md). Expected DNS records.
-- ANS-4 specification: [`ans-4-transparency.md`](ans-4-transparency.md). TL receipts, witness attestations.
+- ANS-4 specification: [`ans-4-transparency.md`](ans-4-transparency.md). TL receipts.
 - [RFC 6698](https://www.rfc-editor.org/rfc/rfc6698): DANE TLSA records.
 - [ISO 17442](https://www.iso.org/standard/78829.html): Legal Entity Identifier (LEI).

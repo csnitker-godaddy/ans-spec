@@ -21,9 +21,6 @@ pinned on V1, and supported indefinitely. Selection and composition follow
   - one `_ans.{fqdn}` **TXT** discovery record per endpoint, at the `_ans` child label;
   - one **HTTPS** RR at the bare `{fqdn}` (apex), as the connection hint `_ans` TXT cannot carry.
 - Plus the family trust records — `_ans-badge` TXT and the server-cert TLSA (ANS-3 §6.3).
-- A registration with **zero endpoints** emits no `_ans` TXT and no HTTPS RR (it emits only the
-  TLSA when a server certificate is present). A bare HTTPS RR with no `_ans` companions — a service
-  binding for a non-existent agent — is never emitted.
 
 ## 2. Record assembly
 
@@ -51,16 +48,11 @@ SvcPriority `1` (ServiceMode), TargetName `.` (the origin — the owner name its
 
 ## 3. Parameter sources and selection
 
-- `version` ← the registration's version (ANS-2), rendered without a `v` prefix.
+- `version` ← the registration's version, rendered with the `v` prefix (§2).
 - `p` ← the endpoint's protocol, mapped to the `_ans` token: `A2A`→`a2a`, `MCP`→`mcp`,
-  `HTTP_API`→`http-api`. (A future protocol added to the domain layer passes through unchanged.)
-  The `ANS_DNSAID` profile maps `HTTP_API` to `x-http` instead; the two families share `a2a`/`mcp`
-  but diverge on the HTTP token.
-- `url` ← the endpoint's `agentUrl`. ANS-1 requires the authority of every `agentUrl` to equal the
-  agent's `agentHost`, so the published `url` always lives under the agent's FQDN.
+  `HTTP_API`→`http-api`.
+- `url` ← the endpoint's `agentUrl`.
 - `mode` ← the constant `direct`.
-
-One `_ans` TXT row is emitted per endpoint, in endpoint order; the HTTPS RR is emitted once.
 
 ## 4. Required flag and TL seal
 
@@ -73,49 +65,32 @@ One `_ans` TXT row is emitted per endpoint, in endpoint order; the HTTPS RR is e
 
 Every emitted record carries TTL `3600`. The composed set is sealed verbatim into the
 `AGENT_REGISTERED` attestation's `dnsRecordsProvisioned[]`
-([ANS-3 §3](../ans-3-dns-publication.md#3-record-set-and-child-label-structure)). When the resolved
-set also includes `ANS_DNSAID`, the `_ans` TXT rows keep `Required=true` and carry the operator's
-required signal for the transition union, while the sibling SVCB rows ride along as `Required=false`
-([ANS-3 §6.4](../ans-3-dns-publication.md#64-composition-ordering-dedup-and-the-required-flag-transition)).
+([ANS-3 §3](../ans-3-dns-publication.md#3-record-set-and-child-label-structure)).
 
 ## 5. Freshness and ANS-5 monitoring
 
-ANS-5's DNS-pointer check re-queries the `_ans.{fqdn}` records and
-validates DNSSEC where the zone is signed; the check is profile-agnostic and consults this profile's
-expected records through the ANS-3 composition contract ([ANS-5 §4](../ans-5-integrity-monitoring.md#4-verification-checks)).
+ANS-5's DNS check re-queries these records
+([ANS-5 §4](../ans-5-integrity-monitoring.md#4-verification-checks)).
 
 ## 6. Lifecycle specifics
 
-The `_ans` records are per-registration: one row per endpoint for the registration's version. Version
-coexistence across registrations is an ANS-1/ANS-2 concern
-([ANS-1 §7](../ans-1-registration.md#7-lifecycle-operations)); every `_ans` family row carries its
-registration's version. On revocation of the last
-ACTIVE version the AHP removes the `_ans`, HTTPS, and family records the RA's revocation response
-lists.
+Records are per-registration; on revocation the AHP removes the records the RA's response lists
+([ANS-1 §7](../ans-1-registration.md#7-lifecycle-operations)).
 
 ## 7. Coexistence and presentation safety
 
-- **CNAME at the apex** blocks the HTTPS RR (RFC 1034 §3.6.2), which is why it is `Required=false`.
-  Operators choosing to publish the HTTPS RR while retaining aliasing behavior need an arrangement
-  without a conflicting CNAME at `agentHost`; CNAME flattening is one option (ANS-3 §8.3). The `_ans`
-  child label is a separate DNS node and is unaffected by a CNAME at the apex.
-- **Sibling agent-discovery drafts** publish under different underscored leaves (`_agents`,
-  `_agent`, …); `_ans` does not collide with them (ANS-3 §8.4).
-- **Presentation**: `_ans` TXT values are free-form character-strings; this profile has none of the
-  SVCB SvcParam presentation-escaping constraints `ANS_DNSAID` carries.
+- A CNAME at the apex blocks the HTTPS RR (ANS-3 §8.3); the `_ans` child label is unaffected.
+- `_ans` TXT values carry none of the SVCB presentation constraints.
 
 ## 8. Error codes
 
-This profile defines no codes of its own. Endpoint and URL validation surface the core
-`INVALID_ENDPOINT`, `ENDPOINT_HOST_MISMATCH`, `DUPLICATE_ENDPOINT`, and `DUPLICATE_PROTOCOL`
-validation errors (ANS-1); a `discoveryProfiles` element naming no supported profile is rejected with
-`INVALID_DISCOVERY_PROFILE` (ANS-3 §6.4). A verify-dns mismatch keeps the registration in
-`PENDING_DNS` and the operator reconciles by publishing the announced record (ANS-3 §4).
+This profile defines no codes of its own. Endpoint validation surfaces the core `INVALID_ENDPOINT`,
+`ENDPOINT_HOST_MISMATCH`, `DUPLICATE_ENDPOINT`, and `DUPLICATE_PROTOCOL` errors (ANS-1); an unknown
+`discoveryProfiles` element is `INVALID_DISCOVERY_PROFILE` (ANS-3 §6.4).
 
 ## 9. Status and requirement
 
-**Requirement: Optional (opt-in) on V2; pinned on V1.** Selection is defined in §1 and the union's
-required flags in §4. Opt-in does not imply deprecation; the profile is supported indefinitely.
+**Requirement: Optional (opt-in) on V2; pinned on V1.**
 
 **Status: Active.** Implemented, sealing and verifying the records defined here.
 

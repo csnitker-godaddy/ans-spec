@@ -10,9 +10,7 @@ Audience: implementers building an ANS-conformant Registration Authority
 An `lei` identity binds a legal entity's ISO 17442 LEI to a key the entity controls, validated
 through the GLEIF **vLEI** credential ecosystem (KERI/ACDC). Key-control axis only — but the
 "key" is established by a verifiable credential chain, not by resolving a document. This profile
-is **Postponed**: the design below is the record, de-risked, but the kind is disabled until its
-external plumbing (a vLEI verifier) is enabled, at which point the kind returns
-`IDENTIFIER_KIND_UNSUPPORTED`.
+is **Postponed**: the kind returns `IDENTIFIER_KIND_UNSUPPORTED` until a vLEI verifier is enabled.
 
 ## 1. Identifier form, canonicalization, selection
 
@@ -25,9 +23,9 @@ external plumbing (a vLEI verifier) is enabled, at which point the kind returns
 
 ## 2. Control proof — key control via vLEI
 
-The LEI itself is public data; possession of it proves nothing. Control is a **legal-entity vLEI
-credential chain** terminating in a subject Authentic Chained Data Container (ACDC) whose issuee
-is an entity Autonomous Identifier (AID), plus a possession signature from that AID's key.
+Control is a **legal-entity vLEI credential chain** terminating in a subject Authentic Chained
+Data Container (ACDC) whose issuee is an entity Autonomous Identifier (AID), plus a possession
+signature from that AID's key.
 `verify-control` checks, **in order** (an RA MAY delegate them to an external vLEI verifier
 performing exactly these checks; it need not implement KERI itself):
 
@@ -44,9 +42,6 @@ performing exactly these checks; it need not implement KERI itself):
    AID's current key, validated against the AID's KEL (key state at proof time), else
    `LEI_SIGNATURE_INVALID`.
 
-Because the chain is presented once and the repeatable proof is the AID-key possession, rotation
-and re-proof do not re-transmit PII (§4).
-
 ## 3. Key source and selection
 
 The authoritative key is the subject AID's current signing key, established by the verified vLEI
@@ -56,16 +51,14 @@ decoded CESR/KERI signature material, not a compact JWS (the one non-JOSE scheme
 
 ## 4. Seal tier — thumbprint-only
 
-`lei` is the deliberate exception to verbatim sealing (ANS-0 §8.4). The seal records the
-**subject AID + a key thumbprint** and the proof — **not** the ACDC and **not** the KEL:
+`lei` is the exception to verbatim sealing (ANS-0 §8.4). The seal records the **subject AID + a
+key thumbprint** and the proof — **not** the ACDC and **not** the KEL:
 
 - the ACDC carries entity PII (legal name, registration data) that MUST NOT be written to an
   append-only public log;
-- KERI's **KEL is the authoritative, externally-resolvable key history** — copying it into the
-  seal would create a second, drift-prone copy.
+- KERI's KEL is the authoritative, externally-resolvable key history; a sealed copy would drift.
 
-A verifier resolves the live KEL for the sealed AID to obtain key state; the seal binds *which*
-entity AID was proven, not a frozen key blob.
+A verifier resolves the live KEL for the sealed AID to obtain key state.
 
 ## 5. Freshness and monitoring
 
@@ -99,22 +92,15 @@ I/O — and MUST NOT become an SSRF oracle.
 
 ## 9. Status and requirement
 
-**Requirement: Optional.** A who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)):
-optional to support; mandatory in execution once enabled.
+**Requirement: Optional** ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)).
 
 **Status: Postponed (de-risked).** The flow is the design of record; the verifier contract is §2;
-the kind is disabled until a vLEI verifier is integrated and tested. Promotion to Active
-requires: a conformant vLEI verifier performing §2's checks, the GLEIF/KEL resolution path meeting
-§7's egress rules, and the thumbprint-only seal shape fixed in `api/api-spec-tl-v2.yaml`.
+the kind is disabled until a vLEI verifier is integrated and tested.
 
 ## 10. Object schemas (postponed shapes)
 
-`lei` is **Postponed**, so the shapes below are the design of record, **not** frozen wire. The
-implemented `VerifyControlRequest` is JWS-only and the implemented seal carries a verbatim
-`verificationMethod`; `lei`'s CESR request and thumbprint-only seal are a **future amendment** and
-are **not** covered by [`api/identity-event-schema-v2.json`](../../api/identity-event-schema-v2.json)
-(which models the JWS-scheme verbatim-VM seal). They are recorded here so the contract is settled
-before the kind ships.
+Postponed shapes: the design of record, not frozen wire, and not covered by
+[`api/identity-event-schema-v2.json`](../../api/identity-event-schema-v2.json).
 
 **Register** — the value is the bare LEI; the full vLEI CESR chain is presented once at this step
 (a postponed request field, since the current `IdentityRegistrationRequest` carries only `value`):

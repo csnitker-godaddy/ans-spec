@@ -21,18 +21,15 @@ more keys the DID document lists under `assertionMethod`. Key-control axis only
   - **no port** — the did:web port encoding `%3A` is rejected (fetches are pinned to 443);
   - no userinfo (`@`);
   - no `/` (did:web path segments are colon-separated *in the DID*);
-  - **no percent-encoding at all** — v1 keeps the grammar strict so the resolution URL is
-    byte-derivable from the DID;
+  - **no percent-encoding at all**;
   - host is a plausible DNS name (labels of letters/digits/hyphen, no leading/trailing hyphen,
     ≤63 chars/label, ≤253 total);
-  - no empty path segment, and no `.`/`..`/control-character segment (dot segments would re-path
-    the resolution URL).
+  - no empty path segment, and no `.`/`..`/control-character segment.
 - **Resolution URL** (pure function of the canonical DID):
   - `did:web:example.com` → `https://example.com/.well-known/did.json`
   - `did:web:example.com:user:al` → `https://example.com/user/al/did.json`
 
-**Any host.** The DID host need not match any agent host. The key-control proof below establishes
-control of the DID; no location challenge is required (ANS-0 §3.3).
+**Any host.** The DID host need not match any agent host.
 
 ## 2. Control proof — key control, multi-key
 
@@ -62,9 +59,6 @@ order** — every check clean before any seal:
    (alg-confusion defense: ES256 ↔ P-256, EdDSA ↔ Ed25519, RS256 ↔ RSA), and unrecognized
    critical (`crit`) headers are rejected. Failure → `PRICC_SIGNATURE_INVALID`.
 
-The RA verifies **every** submitted proof; one failure fails the whole call closed (atomic — no
-partial seal). The shared nonce is consumed once, by the successful call only (ANS-0 §3.2).
-
 ## 3. Key source and selection
 
 Keys are the DID document's `assertionMethod` set, resolved authoritatively by the RA at both
@@ -78,48 +72,34 @@ identity rate-limit policy.
 
 ## 4. Seal tier — verbatim verification method
 
-Each proven key seals as the document's verification-method object **exactly as published** —
-`id`, `type`, `controller`, and the key material in the source representation (`publicKeyJwk`, or
-`publicKeyMultibase` for Multikey documents) — copied member-for-member, alongside the
-registrant's compact JWS (`IDENTITY_VERIFIED`/`IDENTITY_UPDATED` carry the proven set). No
-thumbprints, no re-encodings (ANS-0 §8.4). A third-party verifier checks the operator's signature
-from the badge alone.
+Each proven key seals as the document's verification-method object quoted verbatim (ANS-0 §8.4)
+alongside the registrant's compact JWS.
 
 ## 5. Freshness and monitoring
 
 ANS-5 re-resolves the DID document per its identity-monitoring cadence and compares the live
 `assertionMethod` key set against the sealed `keys[]`. Drift (a sealed key no longer published,
-or the document unreachable) is the integrity signal — surfaced as a finding, never an automatic
-revocation.
+or the document unreachable) is the integrity signal.
 
 ## 6. Lifecycle specifics
 
 - **Rotation** (`PUT` + `verify-control`): prove possession of the new key set; one
-  `IDENTITY_UPDATED` replaces the proven keys, regardless of linked-agent count (zero write
-  fan-out, ANS-0 §8.2).
-- **Revocation**: `POST …/revoke`; read-side terminality keeps it revoked (ANS-0 §8.3).
+  `IDENTITY_UPDATED` replaces the proven keys.
+- **Revocation**: `POST …/revoke` (ANS-0 §8.3).
 - **Re-proof after nonce expiry**: idempotent re-add (ANS-0 §5).
 
 ## 7. Outbound-fetch safety (SSRF)
 
-The fetch target is registrant-steered, so SSRF is a first-class control. Every connection attempt
-made for a fetch — including redirects, alternate address attempts, and reconnections — MUST
-satisfy ([ANS-0 §13](../ans-0-identity-anchor.md#13-security-considerations)):
+Every connection attempt MUST satisfy the egress rules of
+[ANS-0 §13](../ans-0-identity-anchor.md#13-security-considerations) (denylist evaluated on the
+address actually connected to after DNS resolution, including multicast and unspecified addresses;
+rebind resistance across redirect hops; full WebPKI with TLS 1.2+). In addition:
 
-1. An **egress IP denylist evaluated against the address actually connected to, after DNS
-   resolution**: loopback, RFC 1918 / ULA private ranges, link-local (which covers cloud-metadata
-   addresses), multicast, and unspecified addresses are rejected. A hostname-string check, or
-   validation followed by an unchecked second resolution, does not satisfy this.
-2. **Rebind resistance**: a DNS answer that changes between the initial resolution and a later
-   connection in the same resolution (a redirect hop) MUST NOT let any connection reach an address
-   check 1 would reject. Pinning the first resolved address for the duration of the resolution is
-   one way to achieve this; applying check 1 to the address of every connection is another.
-3. **Full WebPKI** (chain to a trusted root + hostname verification), TLS 1.2+.
-4. **Bounds**: hard timeout (default 5 s), response-size cap (default 1 MiB), ≤5 redirects, each
+1. **Bounds**: hard timeout (default 5 s), response-size cap (default 1 MiB), ≤5 redirects, each
    redirect constrained to `https` and to the **origin's registrable domain** (eTLD+1) — a
    redirect leaving the domain is `DID_REDIRECT_DOMAIN_MISMATCH`; leaving `https` or exceeding the
    hop count is `DID_RESOLUTION_FAILED`. Connections are pinned to port 443.
-5. **No SSRF oracle**: caller-visible errors never echo resolved IPs, ports, or redirect chains;
+2. **No SSRF oracle**: caller-visible errors never echo resolved IPs, ports, or redirect chains;
    detail sufficient for diagnosis remains available to the RA's operators and is never returned
    to the caller.
 
@@ -141,8 +121,7 @@ ANS-0 / the API spec.)
 
 ## 9. Status and requirement
 
-**Requirement: Optional.** A who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)):
-supporting `did:web` is optional, but an RA that enables it MUST perform every check in §2.
+**Requirement: Optional** ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)).
 
 **Status: Active.** Implemented, tested, sealing real multi-key proofs.
 

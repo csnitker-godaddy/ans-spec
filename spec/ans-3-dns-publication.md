@@ -12,10 +12,7 @@ ANS-3 defines the DNS records an RA generates for a registration, the records it
 publishes, and the checks required before activation. Records use the registration's `agentHost`
 or its child labels.
 
-Discovery-profile selection and composition are defined in §6. The supported profiles are
-[ANS_TXT](discovery-profiles/ans-txt.md) (TXT and HTTPS records) and
-[ANS_DNSAID](discovery-profiles/ans-dnsaid.md) (DNS-AID SVCB records); their documents define the
-wire syntax. Both include the family trust records in §6.3.
+Discovery profiles are defined in §6.
 
 [ANS-1](ans-1-registration.md) and [ANS-2](ans-2-versioned-naming.md) govern certificates;
 [ANS-5](ans-5-integrity-monitoring.md) governs ongoing DNS and DANE verification.
@@ -28,21 +25,14 @@ selected profiles, and TTL policy, the RA MUST produce the same record content, 
 and canonical order, independent of the request order of `discoveryProfiles`. Each selected profile
 alone MUST produce its discovery records and complete shared family trust records (§6.3).
 
-The RA MUST compose the selected profiles according to §6.4. The resulting order is preserved in
-`dnsRecordsProvisioned[]` and in byte-identical event retries. Internal interfaces and traversal
-order are implementation-defined.
-
-Profile support, request validation, and stored-profile fallback MUST follow §6.4.
+Composition, validation, and stored-profile fallback follow §6.4; the resulting order is preserved in
+`dnsRecordsProvisioned[]` and in byte-identical event retries.
 
 ## 3. Record set and child-label structure
 
-The RA generates record content for the agent's `agentHost` and for child labels under it. The AHP
-or domain owner provisions the records using the content the RA specifies. All child-label records
-coexist with an A, AAAA, or CNAME at the FQDN itself, because child labels are separate DNS nodes.
-
-The apex records — the `ANS_DNSAID` SVCB row and the `ANS_TXT` HTTPS RR — sit at `{agentHost}` and
-redirect or hint address resolution for SVCB/HTTPS-aware clients per RFC 9460 §3; non-aware clients
-continue to follow the A, AAAA, or CNAME.
+The RA generates record content for the agent's `agentHost` and for child labels under it; the AHP
+or domain owner provisions the records. Child-label records coexist with an A, AAAA, or CNAME at the
+FQDN; apex SVCB/HTTPS records follow RFC 9460 §3.
 
 | Record | Label | Type | Profile | Purpose | Required |
 | --- | --- | --- | --- | --- | --- |
@@ -58,8 +48,7 @@ provisioned for that FQDN. The RA's revocation response lists the records to del
 
 ### 3.1 Discoverer fallback chain
 
-A discoverer (a service or peer agent that wants to look up an agent's metadata) walks two sources
-in order when assembling that metadata, stopping at the first source that resolves and verifies:
+A discoverer walks two sources in order when assembling an agent's metadata, stopping at the first source that resolves and verifies:
 
 1. Query DNS for the registration's discovery records. With `ANS_DNSAID`, read the SVCB
    row at `agentHost` and follow its per-endpoint capability locator (`key65400` / `key65409`); with
@@ -71,10 +60,6 @@ in order when assembling that metadata, stopping at the first source that resolv
 The ordering is normative.
 
 ## 4. Activation validations
-
-DNS-side prerequisites for verification are: DNSSEC signature validity, record presence at expected
-labels, and (for versioned registrations) correct media-type routing. An ANS-3 implementation MUST
-publish DNS records at the correct labels with the correct TTL so verifiers can locate them.
 
 Before transitioning a registration from `PENDING_DNS` to `ACTIVE`, the RA runs a conformance check
 to verify the registrant has provisioned the announced records. The table below enumerates the
@@ -96,34 +81,17 @@ above).
 
 ## 5. DNS management roles
 
-| Actor | Initial registration tasks | Ongoing lifecycle tasks | Deregistration tasks |
-| --- | --- | --- | --- |
-| **AHP** | Owns domain, obtains DNS write credential, manages A/AAAA records. Provisions ANS records using content the RA generates | Autonomous DNS updates, monitors renewals, submits config changes | Submits deregistration request, revokes RA access |
-| **RA** | Generates ACME challenge, verifies record, generates permanent record content | Re-runs ACME challenge at each renewal and version bump; updates record content | Specifies records for deletion when last ACTIVE version is deregistered |
-| **DNS provider** | Hosts authorization endpoint, processes AHP's API requests to provision ANS records | Processes AHP's modification requests | Processes deletion requests from the AHP |
-
-A CNAME at the agent's FQDN blocks apex-level HTTPS and SVCB records (RFC 1034 §3.6.2) but does not
-affect child-label records (`_ans`, `_ans-badge`, `_{port}._tcp`). It therefore blocks the `ANS_TXT`
-HTTPS RR and the `ANS_DNSAID` SVCB row, which both sit at the apex. When the RA detects a CNAME it
-skips the apex record. CNAME flattening is one possible arrangement that avoids publishing a
-conflicting CNAME (§8.3).
+The AHP owns the domain and publishes every ANS record using content the RA generates; the RA has no
+DNS write access (§8.1).
 
 ## 6. Discovery profiles
 
-A registration carries a **set** of discovery profiles in `discoveryProfiles`. Each profile is one
-DNS record family; the bundled set is `ANS_DNSAID` (default) and `ANS_TXT` (opt-in). New families
-define additional profile rules without changing the core composition contract.
-
-`discoveryProfiles` is **set semantics**: when omitted or sent as an empty array it normalizes to
-the default `["ANS_DNSAID"]`; the V1 lane never consults the default and is pinned to `["ANS_TXT"]`
-regardless of request; an operator opts into `ANS_TXT` explicitly, alone or in the
-`["ANS_DNSAID", "ANS_TXT"]` transition union. Request order carries no meaning — emission order is
-the canonical order in §6.4.
+A registration carries a set of discovery profiles in `discoveryProfiles`; each profile is one DNS
+record family (`ANS_DNSAID` default, `ANS_TXT` opt-in). The set normalizes per §6.4 rule 1; the V1
+lane never consults the default and is pinned to `["ANS_TXT"]` regardless of request. Request order
+carries no meaning.
 
 ### 6.1 The discovery-profile registry
-
-This table is authoritative; the [`discovery-profiles/README.md`](discovery-profiles/README.md) index
-mirrors it.
 
 | Profile | Document | Requirement | Discovery records | Status |
 | --- | --- | --- | --- | --- |
@@ -132,10 +100,8 @@ mirrors it.
 
 **Status meanings.** **Active** — implemented and tested, emitting real records an operator publishes and the
 RA verifies at verify-dns. **Default / Opt-in** is the requirement axis, not the status: both
-profiles are Active; `ANS_DNSAID` is the default set now that the DNS-AID-aligned SVCB shape is at
-conformance, and `ANS_TXT` is opt-in (the operator must name it) — supported indefinitely for
-operators whose zone-edit tooling targets `_ans.{fqdn}`. Opt-in is a requirement statement, not a
-deprecation signal.
+profiles are Active; `ANS_DNSAID` is the default set, and `ANS_TXT` is opt-in (the operator must
+name it) — supported indefinitely.
 
 ### 6.2 The profile template
 
@@ -152,9 +118,6 @@ Every discovery-profile document specifies the following content:
 9. Status and requirement.
 10. Object schemas — worked record examples.
 
-A profile only ever varies the **discovery records** layered on the shared family trust records
-(§6.3). All profiles follow the same composition rules (§6.4) and activation validations (§4).
-
 ### 6.3 Family trust records
 
 Both ANS-family profiles include the following shared trust records, deduplicated in the composed
@@ -164,25 +127,20 @@ set (§6.4). Each selected profile alone still produces the complete family trus
   where `{version}` is the registration's semver (the value carries the `v` prefix, matching the ANSName's version segment) and `{badgeURL}` is the
   Transparency Log badge endpoint for the agent (`{tlPublicBaseURL}/v1/agents/{agentId}`), falling
   back to the agent's first endpoint URL when no public TL URL is configured. Emitted only when the
-  registration has at least one endpoint. **`Required=true`**: a badge-verifying client will not
-  trust an agent whose discovery records publish without a paired badge.
+  registration has at least one endpoint. **`Required=true`**.
 - **Server DANE TLSA** — `_{port}._tcp.{agentHost}` TLSA, value `3 0 1 {fingerprint}` (DANE-EE,
   full-certificate selector 0, SHA-256 — the fingerprint is SHA-256 over the full DER Server
   Certificate, matching the badge fingerprint in the TL). One record per **distinct TLS endpoint
   port** (ports sorted ascending; plaintext `http` endpoints skipped; an empty port set falls back
-  to `443`), so a DANE client connecting to a non-443 endpoint finds a record at `_{its-port}._tcp`.
-  Emitted only when the registration has a server certificate. **`Required=false`**: a TLSA is only
-  meaningful in a DNSSEC-signed zone, a runtime property the record set cannot know; the verify layer
-  enforces the stricter rule that a DNSSEC-validated TLSA MUST match the expected fingerprint
-  (§4).
+  to `443`). Emitted only when the registration has a server certificate. **`Required=false`**; a
+  DNSSEC-validated TLSA MUST still match the expected fingerprint (§4).
 
 ### 6.4 Composition: ordering, dedup, and the required-flag transition
 
 The composed `dnsRecordsProvisioned[]` MUST satisfy these rules:
 
 1. **Resolved profile set.** Unknown profiles in stored registrations are omitted. An omitted or
-   empty set, including an all-unknown stored set, normalizes to `["ANS_DNSAID"]`. Partial omission
-   and all-unknown fallback MUST be diagnosable and distinguishable to the operator.
+   empty set, including an all-unknown stored set, normalizes to `["ANS_DNSAID"]`.
 2. **Unique records.** The composed set MUST contain one entry per distinct `(name, type, value)`.
    Profiles producing the same record MUST agree on its `Required` flag: the shared badge is
    required and TLSA records are optional (§6.3).
@@ -201,54 +159,26 @@ deduped (first occurrence wins) and an empty array normalizes to the default —
 `minItems: 1` and `uniqueItems: true` are the canonical client contract, which the server normalizes
 rather than rejecting. Every profile permitted by the `DiscoveryProfile` API contract MUST be
 supported for record generation and verification, and every generated profile MUST be permitted by
-that contract. The RA MUST NOT serve registration operations under an inconsistent configuration
-and MUST make inconsistencies diagnosable to its operator.
+that contract.
 
 ## 7. DNS verification modes
 
-ANS-3 defines two operational modes for DNS verification.
-
-**Lookup-mode.** The verifier queries DNS directly for records and validates DNSSEC where the zone
-is signed. The RA runs activation validations against live DNS. Registrants provision records before
-the registration completes (typically through an AHP-side DNS-management step). Lookup-mode is the
-production-conformant path.
-
-**Noop-bypass.** The verifier accepts DNS records as provided by the RA in the registration event
-itself, without querying DNS independently. Noop-bypass exists for local testing and single-RA
-internal use cases where DNS is unavailable or not yet operational. A deployment running noop-bypass
-is development-only and non-conformant for production; an operator MUST NOT claim ANS-3 conformance
-while serving external verifiers from a noop-bypass deployment.
-
-Implementations MUST document which mode each deployment runs and MUST default to lookup-mode for
-any deployment exposed to external verifiers.
+Activation validations (§4) MUST query live DNS, validating DNSSEC where the zone is signed. A
+deployment that accepts records without querying DNS is non-conformant for any verifier it serves
+externally.
 
 ## 8. Security considerations
 
 ### 8.1 RA-DNS privilege separation
 
-The RA's DNS permissions MUST exclude TLSA write access. A compromised RA that could write the
-`_{port}._tcp.{agentHost}` (Server DANE) TLSA record plus issue a fraudulent Server Certificate
-could compromise DANE's defense-in-depth in a single action. The RA generates the expected Server
-TLSA *content* from the issued Server Certificate; the AHP publishes it to DNS. The split keeps the
-DANE record under AHP authority while the certificate-issuance authority stays with the RA, and
-preserves DANE as an independent verification channel.
-
-A compromise of either party alone is detectable through a mismatch in the verification record
-(mismatched fingerprints, DNSSEC signature failures, or divergent TL evidence). Compromise of both
-parties simultaneously requires detection by external scoring services and is out of scope for ANS.
+The RA's DNS permissions MUST exclude TLSA write access: a compromised RA that could both issue a
+Server Certificate and write the matching TLSA would defeat DANE as an independent channel. The RA
+generates TLSA content; the AHP publishes it.
 
 ### 8.2 Public discoverability of DNS records
 
 ANS-3 records MUST be published in public DNS zones, queryable by any third party via standard DNS
-lookups (dig, nslookup, DNS library API calls). No private DNS, DNS delegation to an internal
-nameserver, or proprietary lookup channel is permitted. Public discoverability is a conformance
-requirement because:
-
-- Verifiers MUST be able to prove the records exist without special access to the domain owner's infrastructure.
-- Independent verification (ANS-5 monitors, third-party verifiers) requires querying the same DNS zone any other verifier would use.
-- DNSSEC validation is only meaningful when all verifiers resolve against the same chain of trust.
-
-An implementation that publishes DNS records only to a private zone, requires authentication to
+lookups. An implementation that publishes DNS records only to a private zone, requires authentication to
 query, or uses a proprietary protocol for record lookup is non-conformant even if the record format
 and content are otherwise correct.
 
@@ -259,48 +189,21 @@ RFC 1034 §3.6.2. The `ANS_DNSAID` SVCB row and the `ANS_TXT` HTTPS RR both sit 
 Operators requiring aliasing behavior MUST choose a DNS arrangement that preserves the required
 ANS records without a conflicting CNAME at `agentHost`. CNAME flattening is one possible
 arrangement. A CNAME at `agentHost` does not affect the separate `_ans` child label, so `ANS_TXT`
-discovery still functions behind an apex CNAME.
+discovery still functions behind an apex CNAME. When the RA detects a CNAME at `agentHost` it omits
+the apex record.
 
 ### 8.4 Coexistence with other DNS records under the same FQDN
 
-`ANS_DNSAID` is ANS's own DNS-AID-aligned profile: its draft-02 params (`cap`, `cap-sha256`, `bap`,
-`well-known`) ride the SVCB row in the RFC 9460 §14.3.1 Private Use `keyNNNNN` presentation form
-(`key65400`–`key65409`), which generic SVCB clients ignore per the §8 unknown-key rule. The
-`metadataUrl` that feeds `cap` and `well-known` is validated at registration to be free of every
-byte the SVCB presentation format escapes, so the published value stays byte-identical to what a
-verifier observes (see the [ans-dnsaid profile](discovery-profiles/ans-dnsaid.md)). Other
-agent-discovery specs (AID, DN-ANR, AgentDNS, ADS) publish under different underscored leaves
-(`_agents`, `_agent`, …) so their records do not collide with the ANS `_ans` family.
+ANS SvcParams ride the SVCB row in Private-Use `keyNNNNN` form, which generic SVCB clients ignore
+(RFC 9460 §8); the presentation-safety rule is in
+[ans-dnsaid §7](discovery-profiles/ans-dnsaid.md#7-coexistence-and-presentation-safety). Other
+agent-discovery drafts publish under different underscored leaves and do not collide with `_ans`.
 
 ## 9. Conformance
 
-A conformant ANS-3 implementation:
-
-1. Produces deterministic record content, required flags, and canonical order under §2 and
-   composes the selected profiles per §6.4.
-2. Defaults `discoveryProfiles` to `["ANS_DNSAID"]` when the field is omitted or empty, pins the V1
-   lane to `["ANS_TXT"]` (the V1 lane never consults the default), treats `ANS_TXT` as opt-in, and
-   supports the `["ANS_DNSAID", "ANS_TXT"]` union. All paths are conformant; `ANS_DNSAID` is the
-   default.
-3. Runs the activation validations (§4) before transitioning a registration from `PENDING_DNS` to
-   `ACTIVE`.
-4. Emits the family trust records (§6.3): the `_ans-badge` TXT (`Required`) and one Server DANE TLSA
-   per distinct TLS endpoint port (`Required=false`), deduped to a single instance across sibling
-   profiles.
-5. For `ANS_DNSAID`, emits one SVCB row per endpoint at the FQDN with the DNS-AID SvcParams in the
-   RFC 9460 §14.3.1 Private Use `keyNNNNN` presentation form, never the named DNS-AID forms.
-6. Validates `discoveryProfiles` (`INVALID_DISCOVERY_PROFILE` on an unknown request element),
-   preserves the stored-profile fallback and diagnostics, and enforces profile support under §6.4.
-7. Honors the per-version TTL parameter from operator policy.
-8. Operates in lookup-mode for any deployment exposed to external verifiers; declares noop-bypass
-   mode explicitly when used.
-9. Publishes records in public DNS, queryable by any third party.
-
-**Optional surface.** Discovery-profile choice (`ANS_TXT`, `ANS_DNSAID`, or the union); DNS
-verification mode (lookup vs noop-bypass, with noop-bypass non-conformant for external-facing
-deployments); the TLSA-write duty split (per §8.1, the RA generates TLSA content but MUST NOT write
-it; the AHP publishes it). A conforming verifier MUST NOT downgrade integrity scoring solely because
-an operator chose `ANS_TXT` over `ANS_DNSAID` (or vice versa).
+A conformant ANS-3 implementation implements §§2–8 and honors the per-version TTL parameter from
+operator policy. A conforming verifier MUST NOT downgrade integrity scoring solely because an
+operator chose `ANS_TXT` over `ANS_DNSAID` (or vice versa).
 
 ## References
 
@@ -316,10 +219,7 @@ an operator chose `ANS_TXT` over `ANS_DNSAID` (or vice versa).
 
 ## Appendix A. Annotated zone-file example
 
-A zone-file snippet showing a versioned ANS registration at `ai-agent.acmecorp.com` running the
-transition union (`discoveryProfiles: ["ANS_DNSAID", "ANS_TXT"]`) with two protocol endpoints (A2A
-on 443, MCP on 8443). Record content matches §3 and §6 normative syntax. Per-record ownership is
-annotated.
+A zone-file snippet for a registration running the transition union with A2A on 443 and MCP on 8443.
 
 ```text
 ; ========== ACME Corp ANS Agent Zone Snippet ==========
@@ -354,16 +254,3 @@ _ans-badge.ai-agent.acmecorp.com. 3600 IN TXT  "v=ans-badge1; version=v2.1.0; ur
 _443._tcp.ai-agent.acmecorp.com.  3600 IN TLSA 3 0 1 a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
 _8443._tcp.ai-agent.acmecorp.com. 3600 IN TLSA 3 0 1 a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
 ```
-
-**Record ownership summary:**
-
-- RA generates expected content for: `ANS_TXT` `_ans` TXT, `ANS_TXT` HTTPS RR, `ANS_DNSAID` SVCB, `_ans-badge` TXT, Server DANE TLSA.
-- AHP publishes all DNS records (using RA-generated content where applicable) and additionally generates content for: A/AAAA. The RA has no DNS write access.
-- Both may set: TTL, record management cadence (update/delete).
-
-**Union and version notes:**
-
-- With `["ANS_DNSAID", "ANS_TXT"]`, both families' discovery records coexist; the `_ans` TXT rows carry the required signal and the SVCB rows are `Required=false` (§6.4).
-- The composed canonical order sealed into `dnsRecordsProvisioned[]` is `[_ans TXT×N, HTTPS, SVCB×N, badge, TLSA×ports]`.
-- Server DANE TLSA is per distinct TLS port; both 443 and 8443 carry the same full-certificate fingerprint (the cert is FQDN-scoped, not per-port).
-- When v2.1.0 is revoked, the RA's revocation response lists the v2.1.0 `_ans`, SVCB, and `_ans-badge` records to delete.

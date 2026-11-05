@@ -4,37 +4,11 @@ info:
   description: |
     Management API for the Agent Name Service (ANS) — v2.
 
-    This API provides authenticated, ownership-scoped operations for managing
-    ANS agent registrations, certificates, and lifecycle. It replaces the
-    /v1/agents API with the following key changes:
-
-    **Route structure:** All routes moved from `/v1/agents` to `/v2/ans/agents`.
-    Registration uses `POST /v2/ans/agents` (standard REST collection POST,
-    no `/register` verb suffix). Action endpoints (`/revoke`, `/verify-acme`,
-    `/verify-dns`) retain verb suffixes for procedural clarity.
-
-    **Management-scoped listing:** `GET /v2/ans/agents` returns only agents owned by
-    the authenticated caller. Global search/discovery has moved to a dedicated
-    search service.
-
-    **Cursor-based pagination:** The list endpoint uses cursor-based pagination
-    instead of offset-based, eliminating the O(n) performance degradation at
-    high offsets.
-
-    **Ownership enforcement:** All agent-specific operations (`GET /{agentId}`,
-    `POST /{agentId}/revoke`, certificate endpoints) enforce that the
-    authenticated caller owns the requested agent.
-
-    **Resolution removed:** `POST /v1/agents/resolution` is not carried forward
-    to v2. The `_ans` DNS TXT record already contains agent endpoints, making
-    this endpoint redundant. Consumers needing discovery should use the
-    registered agents search service (`/v1/ans/registered-agents`).
-
-    ## Deprecation of v1
-
-    All `/v1/agents/*` routes are deprecated and will be removed per the
-    published sunset schedule. v1 responses include `Deprecation: true`,
-    `Sunset`, and `Link` headers pointing to v2 equivalents.
+    Authenticated, ownership-scoped operations for managing ANS agent
+    registrations, certificates, and lifecycle, plus the optional Verified
+    Identity surface (ANS-0 §12.2). Normative semantics: `spec/`.
+    `/v1/agents/*` routes are deprecated and return `Deprecation`, `Sunset`,
+    and `Link` headers pointing at v2 equivalents.
   version: 2.0.0
   contact:
     name: ANS Working Group
@@ -69,12 +43,7 @@ tags:
       Registration, not here.
 
 # Global security requirement. Every path inherits this and can
-# override with `security: []` to declare itself anonymous. The
-# handler's actual auth behaviour is documented in CLAUDE.md §Auth:
-# static API key (Bearer <key>) for quickstart, OIDC bearer tokens
-# when `auth.type: oidc` is configured. Both providers accept the
-# same shape on the wire, which is why a single HTTP-bearer scheme
-# covers both in the OpenAPI document.
+# override with `security: []` to declare itself anonymous.
 security:
   - bearerAuth: []
 
@@ -90,13 +59,6 @@ paths:
       description: |
         Returns agents owned by the authenticated caller. This is a management
         endpoint, not a discovery/search endpoint.
-
-        **Key differences from v1 `GET /v1/agents`:**
-        - Results are scoped to the authenticated caller's agents only.
-        - Uses cursor-based pagination (no `offset`).
-        - Removed filters: `protocol`, `agentDisplayName`, `version`.
-          Use the dedicated search service for discovery use cases.
-        - Removed `totalCount` and `searchCriteria` from response.
 
         **Pagination:** Use the `nextCursor` value from the response as the
         `cursor` query parameter in the next request. When `hasMore` is false,
@@ -180,9 +142,8 @@ paths:
         submitted information, then interacts with the CA to issue certificates
         or validates provided (BYOC) server certificates.
 
-        The request MUST include an identity CSR. The request can optionally
-        include a server CSR (for RA-issued server cert) or a BYOC server
-        certificate with its chain.
+        The request MUST carry exactly one of `serverCsrPEM` /
+        `serverCertificatePEM` and MAY carry `identityCsrPEM`.
       operationId: registerAgent
       requestBody:
         description: Agent registration request
@@ -389,14 +350,11 @@ paths:
 
         **Ownership enforced:** Returns 403 if caller does not own the agent.
 
-        For ACTIVE agents: Revokes due to key compromise, decommissioning, or
-        other security reasons. Certificate added to CRL, registry entry flagged.
-
         For PENDING registrations (PENDING_CERTS or PENDING_DNS): Cancels
         the registration, revokes any already-issued certificates.
 
         PENDING_VALIDATION registrations are not cancellable and will
-        auto-expire.
+        auto-expire. Behaviour per state is defined in ANS-1 §4.4 and §7.
       operationId: revokeAgent
       parameters:
         - $ref: '#/components/parameters/AgentIdPath'
@@ -904,20 +862,13 @@ paths:
         - Verified Identities
       summary: Register a verified identity
       description: |
-        Registers an identifier (the kind — `did:web`, `did:key` — is
-        inferred from the value's lexical form, never caller-asserted)
-        and returns the challenge round to sign: one entry per
-        eligible key, all over a single anti-replay nonce. The
-        identity is created in `PENDING_CONTROL`; nothing is sealed
-        until verify-control passes.
-
-        Re-POSTing the same value while the identity is `PENDING_CONTROL`
-        is the idempotent re-add: the same `identityId` returns with
-        a fresh nonce (the prior nonce is superseded). A value
-        already verified — by this owner or any other — returns 409
-        `IDENTIFIER_DUPLICATE`. Kinds without an enabled control
-        verifier (`lei`, postponed) return 422
-        `IDENTIFIER_KIND_UNSUPPORTED`.
+        Registers an identifier (kind inferred from lexical form) and
+        returns the challenge round. Re-POSTing the same value while
+        `PENDING_CONTROL` returns the same `identityId` with a fresh
+        nonce. A value already verified returns 409
+        `IDENTIFIER_DUPLICATE`; kinds without an enabled control
+        verifier return 422 `IDENTIFIER_KIND_UNSUPPORTED`. Semantics:
+        ANS-0 §3.2, §5.
       operationId: registerIdentity
       requestBody:
         required: true
@@ -1017,13 +968,9 @@ paths:
         - Verified Identities
       summary: Rotate / replace the identifier
       description: |
-        Stages a same-kind replacement and returns fresh challenges
-        over it. Until the new proof lands the previously sealed
-        state stands; a replacement that never verifies expires with
-        its nonce. On a clean verify-control the RA swaps the value
-        and seals ONE `IDENTITY_UPDATED` event — regardless of how
-        many agents are linked. Cross-kind replacement is rejected
-        (revoke and register a new identity instead).
+        Stages a same-kind replacement and returns fresh challenges;
+        sealed state stands until verify-control passes (ANS-0 §5
+        step 3). Cross-kind replacement is rejected.
       operationId: rotateIdentity
       parameters:
         - $ref: '#/components/parameters/IdentityIdPath'
@@ -1071,30 +1018,10 @@ paths:
         - Verified Identities
       summary: Prove control of the identifier
       description: |
-        Submits the control proofs: one compact JWS per proven key,
-        each payload equal — verbatim — to the served `signingInput`
-        (clients never canonicalize; the RA checks payload equality
-        before verifying any signature). Every proof must verify
-        against the identifier's AUTHORITATIVE key for its `kid`
-        (resolved from the DID document for `did:web`, decoded from
-        the identifier for `did:key`); one bad proof fails the call
-        closed. A nonce authorizes at most one successful
-        verify-control, including under concurrent attempts; a
-        failed attempt does not consume it.
-
-        JWS bearing unrecognized `crit` header parameters are
-        rejected (RFC 7515 §4.1.11) — this verifier implements no
-        critical extensions.
-
-        Seal-before-success: the RA seals `IDENTITY_VERIFIED` /
-        `IDENTITY_UPDATED` on the identity's own Transparency Log
-        stream — every proven key sealed self-verifyingly (public
-        key + signed proof) — and reports success ONLY after the TL
-        acknowledges the seal; the identity's state transition takes
-        effect with that acknowledgment, so anything this API reports as set up is
-        resolvable in the TL at that moment. If the TL is
-        unavailable the call fails 503 `TL_UNAVAILABLE`, retryable:
-        the nonce is NOT consumed and the prior state stands.
+        Submits one compact JWS per proven key; each payload equals
+        the served `signingInput` verbatim. Unrecognized `crit`
+        headers are rejected (RFC 7515 §4.1.11). Success is reported
+        only after the TL seals the event (ANS-0 §3.2, §5.1).
       operationId: verifyIdentityControl
       parameters:
         - $ref: '#/components/parameters/IdentityIdPath'
@@ -1132,8 +1059,7 @@ paths:
             shortly; the exclusion lapses within ~30s if that attempt
             neither completes nor fails), or the
             identifier is already verified by another owner
-            (`IDENTIFIER_DUPLICATE`). Recovery from an expired nonce
-            is the idempotent re-add (re-POST the same value).
+            (`IDENTIFIER_DUPLICATE`).
           content:
             application/json:
               schema:
@@ -1161,16 +1087,8 @@ paths:
         - Verified Identities
       summary: Revoke the identity
       description: |
-        Transitions a VERIFIED identity to REVOKED and seals ONE
-        `IDENTITY_REVOKED` event. A POST (state change), never a
-        DELETE: an identity cannot be deleted — its history is
-        append-only in the Transparency Log. Propagation to every
-        linked agent's badge requires no further sealed event on any
-        agent's stream.
-
-        Seal-before-success: the identity transitions only after the TL
-        acknowledges the seal. TL unavailable → 503 `TL_UNAVAILABLE`,
-        retryable, the identity stays VERIFIED.
+        Transitions a VERIFIED identity to REVOKED and seals
+        `IDENTITY_REVOKED` (ANS-0 §5 step 4, §5.1).
       operationId: revokeIdentity
       parameters:
         - $ref: '#/components/parameters/IdentityIdPath'
@@ -1212,27 +1130,13 @@ paths:
         - Verified Identities
       summary: Link agents to the identity
       description: |
-        Binds a batch of the caller's agents to the identity — a
-        single owner-gated call with no challenge and no signature:
-        the caller MUST own the identity AND every named agent (key
-        possession never authorizes a link). The whole batch seals as
-        ONE `IDENTITY_LINKED` event on the IDENTITY stream carrying
-        the agent ids; an agent's own stream and audit history are
-        never written by identity operations. Already-linked agents
-        are skipped idempotently; a call that links nothing new seals
-        nothing.
-
-        Liveness gate: links attach only while the identity is
-        VERIFIED, and every named agent must be live — ACTIVE or
-        DEPRECATED; a terminal or pre-activation agent fails the
-        whole batch with 422 `AGENT_NOT_LINKABLE` (all-or-nothing,
-        matching the one-event batch semantics). The route is
-        per-owner rate limited (429-equivalent `RATE_LIMITED`).
-
-        Seal-before-success: success is reported only after the TL
-        acknowledges the `IDENTITY_LINKED` seal; the links take
-        effect with the acknowledgment. TL unavailable → 503
-        `TL_UNAVAILABLE`, retryable, nothing linked.
+        Links a batch of the caller's agents to the identity; the
+        caller MUST own the identity and every agent; the identity
+        must be VERIFIED and each agent ACTIVE or DEPRECATED
+        (ANS-0 §6). A terminal or pre-activation agent fails the
+        whole batch with `422 AGENT_NOT_LINKABLE` (all-or-nothing).
+        One `IDENTITY_LINKED` event per call; already-linked agents
+        are skipped. Per-owner rate limited (`RATE_LIMITED`).
       operationId: linkIdentityAgents
       parameters:
         - $ref: '#/components/parameters/IdentityIdPath'
@@ -1287,15 +1191,8 @@ paths:
         - Verified Identities
       summary: Unlink an agent
       description: |
-        Ends one association and seals `IDENTITY_UNLINKED` on the
-        identity stream. The association's history persists in the
-        identity's audit chain and the raw log tiles; unlinked pairs
-        may be re-linked later. Shares the link route's per-owner
-        rate limit.
-
-        Seal-before-success: the link ends only after the TL
-        acknowledges the seal. TL unavailable → 503 `TL_UNAVAILABLE`,
-        retryable, the link stands.
+        Ends one link and seals `IDENTITY_UNLINKED` (ANS-0 §6).
+        Shares the link route's rate limit.
       operationId: unlinkIdentityAgent
       parameters:
         - $ref: '#/components/parameters/IdentityIdPath'
@@ -1326,23 +1223,15 @@ paths:
 
 components:
   # ──────────────────────────────────────────────────────────────────
-  # Security schemes — both providers (static API key + OIDC) accept
-  # the same `Authorization: Bearer <token>` shape on the wire, so
-  # one HTTP-bearer definition covers both. Swagger UI renders an
-  # "Authorize" button from this definition; paste your API key
-  # (quickstart default: `ans-dev-key-change-me`) as the bearer value
-  # and "Try it out" will include it on subsequent requests.
+  # Security schemes
   # ──────────────────────────────────────────────────────────────────
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       description: |
-        Static API key or OIDC bearer token. The RA treats the static
-        key as admin; OIDC tokens inherit admin-ness from configured
-        admin-groups (see `auth.oidc.admin-groups` in the config
-        reference). Public-read routes (TL verifier GETs) and
-        `/v2/admin/{health,ready}` and `/docs` ignore this header.
+        Bearer token. Public-read routes and `/v2/admin/{health,ready}`
+        ignore this header.
 
   # ──────────────────────────────────────────────────────────────────
   # Reusable parameters
@@ -1364,10 +1253,7 @@ components:
     # ── New: Cursor-paginated list response ──────────────────────
     AgentListResponse:
       type: object
-      description: |
-        Ownership-scoped, cursor-paginated list of the caller's agents.
-        Replaces v1's `AgentSearchResponse`. Collection array is named
-        `items` per standard REST collection-response conventions.
+      description: Cursor-paginated list of the caller's agents.
       properties:
         items:
           type: array
@@ -1439,7 +1325,7 @@ components:
         - limit
         - hasMore
 
-    # ── Unchanged schemas carried forward from v1 ────────────────
+    # ── Shared schemas ───────────────────────────────────────────
     Link:
       type: object
       properties:
@@ -1592,12 +1478,9 @@ components:
         identities:
           type: array
           description: |
-            Additive, optional, COMPUTED — the verified identities
-            currently linked to this agent, derived from the identity's
-            sealed link events under ANS-0 §8.2–§8.3. Never part of the
-            registration's own sealed state; identity rotation/revocation
-            is visible here once sealed, with no event on the agent's
-            stream.
+            Additive, optional, COMPUTED from sealed link events
+            (ANS-0 §8.2–§8.3); never part of the registration's sealed
+            state.
           items:
             $ref: '#/components/schemas/LinkedIdentity'
       required:
@@ -1653,8 +1536,7 @@ components:
           description: |
             Unique identifier assigned to this agent registration. Required for
             all subsequent API calls (verify-acme, verify-dns, certificates,
-            revoke). New in v2 — previously callers had to parse this from
-            HATEOAS link hrefs. Recommended for backport to v1.
+            revoke).
         status:
           type: string
           enum: [PENDING_VALIDATION, PENDING_DNS]
@@ -2037,8 +1919,7 @@ components:
       description: |
         Registers (POST) or rotates (PUT) an identifier. The kind is
         inferred from the value's lexical form — `did:web:` prefix,
-        `did:key:` prefix, a 20-character LEI, or a `.eth` name (the last
-        two recognized but postponed) — never caller-asserted.
+        `did:key:` prefix, a 20-character LEI, or a `.eth` name.
       properties:
         value:
           type: string
@@ -2050,11 +1931,8 @@ components:
     IdentityChallengeResponse:
       type: object
       description: |
-        The 202 challenge round. Every entry shares the same
-        anti-replay nonce and the same signingInput — the input is
-        key-independent; entries enumerate the keys the resolver
-        could see in advance (a single unkeyed entry when it could
-        not — name keys via the JWS `kid` header at verify time).
+        The 202 challenge round: one entry per enumerable key, all
+        sharing one nonce and one `signingInput`.
       properties:
         identityId:
           type: string
@@ -2109,11 +1987,9 @@ components:
     VerifyControlRequest:
       type: object
       description: |
-        One compact JWS per proven key. Supported algorithms match
-        what the verifier implements: EdDSA (Ed25519), ES256
-        (ECDSA P-256), and RS256 (RSA >= 2048). Key-agreement keys
-        (X25519) and curves without a verifier (secp256k1,
-        P-384/521) are rejected with a precise error.
+        One compact JWS per proven key. Supported algorithms: EdDSA
+        (Ed25519), ES256 (ECDSA P-256), and RS256 (RSA >= 2048);
+        other key types are rejected.
       properties:
         signedProofs:
           type: array
@@ -2124,9 +2000,8 @@ components:
             description: |
               Compact JWS over the served signingInput. The protected
               header carries `kid` (the claimed verification method)
-              and MAY carry `jwk` (the signer's public key — required
-              by the quickstart noop resolver, ignored by the web
-              resolver, which always uses the resolved document).
+              and MAY carry `jwk`, which verifiers ignore in favour of
+              the resolved key.
       required:
         - signedProofs
 
@@ -2135,16 +2010,13 @@ components:
       enum: [PENDING_CONTROL, VERIFIED, REVOKED]
       description: |
         PENDING_CONTROL → VERIFIED → REVOKED. Rotation keeps the identity
-        VERIFIED (the staged replacement proves control before
-        anything changes).
+        VERIFIED.
 
     IdentityListResponse:
       type: object
       description: |
-        Ownership-scoped, cursor-paginated list of the caller's
-        verified identities. Mirrors `AgentListResponse`: the
-        collection array is named `items` per the standard REST
-        collection-response convention shared across the v2 surface.
+        Cursor-paginated list of the caller's identities (same
+        envelope as `AgentListResponse`).
       properties:
         items:
           type: array
@@ -2222,9 +2094,7 @@ components:
     IdentityLinkRequest:
       type: object
       description: |
-        The batch of the caller's agents to bind — one owner-gated
-        call, no challenge, no signature; the whole batch seals as
-        ONE IDENTITY_LINKED event on the identity stream.
+        Agents to link; the batch seals as one IDENTITY_LINKED event.
       properties:
         agentIds:
           type: array

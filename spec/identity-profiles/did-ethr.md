@@ -11,7 +11,7 @@ Audience: implementers evaluating future identifier kinds
 > RPC plumbing are real; until then `IDENTIFIER_KIND_UNSUPPORTED` (ANS-0 §10.1). No placeholder
 > seal.
 
-**Requirement: Optional** — a who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)), like every who-profile.
+**Requirement: Optional** ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)).
 
 Ethereum-account identities bind an on-chain account (an EOA or a smart-contract wallet) to an
 ANS identity. This is the one currently-anticipated kind that is **not** JOSE/JWS: Ethereum
@@ -47,8 +47,3 @@ codec differs).
   URLs), bound calls, and never expose RPC errors as an oracle. CCIP-Read (EIP-3668) off-chain
   gateway resolution, if supported, is itself a registrant-steered fetch and MUST be hardened like
   did:web.
-- **What gates promotion**: a secp256k1/Keccak proof verifier (EIP-191 + EIP-712), an ERC-1271
-  `eth_call` path, a pinned-RPC resolver, and tests against real chain reads.
-
-Note: EIP-712 typed-data binding is preferred over `personal_sign` because the structured domain
-(`EIP712Domain`) gives a second, wallet-visible domain separation on top of ANS's `purpose`.

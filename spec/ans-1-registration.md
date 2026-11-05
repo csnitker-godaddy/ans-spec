@@ -15,26 +15,24 @@ ANS-1 defines how an agent's **primary anchor** — an FQDN proven through ANS-0
 - The lifecycle state machine (§4.4).
 - The event set the RA emits to the Transparency Log (ANS-4).
 
-ANS-1 reads the agent's primary anchor through the ANS-0 proof-of-control gate
-([ANS-0 §3](ans-0-identity-anchor.md#3-the-proof-of-control-gate)) and does not re-implement
-per-kind mechanics. The agent (the *what*) carries one FQDN primary anchor; operator identities
-(the *who*) are **Verified Identities** proven and linked per ANS-0
-([§4](ans-0-identity-anchor.md#4-the-verified-identity-object),
-[§6](ans-0-identity-anchor.md#6-identity-links)), not registration anchor types.
-
-ANS-1 does **not** specify the proof-of-control gate itself (ANS-0), the ANSName form or Identity Certificate binding (ANS-2), DNS emission (ANS-3), TL sealing (ANS-4), continuous verification (ANS-5), or trust scoring (the separate Trust Index specification).
+The primary anchor is proven through the ANS-0 proof-of-control gate
+([ANS-0 §3](ans-0-identity-anchor.md#3-the-proof-of-control-gate)) via the fqdn profile; operator
+identities are Verified Identities ([ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object),
+[§6](ans-0-identity-anchor.md#6-identity-links)), not registration anchor types. ANS-1 does not
+specify naming (ANS-2), DNS emission (ANS-3), sealing (ANS-4), or monitoring (ANS-5).
 
 ## 2. Terminology
 
 - **Registration**: an aggregate the RA owns, identified by `agentId`, carrying the ANSName (`version` + `agentHost`), operational metadata, status, and lifecycle history.
 - **AHP (Agent Hosting Platform)**: the operator that hosts the agent's code and manages its DNS and certificates. Submits the registration request.
-- **Lifecycle event**: an event the RA emits to the TL when a registration changes state. The emitted set is `AGENT_REGISTERED` (at activation) and `AGENT_REVOKED` (at revocation). `AGENT_RENEWED` and `AGENT_DEPRECATED` are reserved event types — defined in the TL event enums and accepted at ingest, but not emitted by the reference RA (§6.3).
-- **Identity Certificate**: an optional certificate binding the registration's ANSName, issued from the RA's private CA against an operator-submitted CSR. A registration without one registers, activates, and operates on its Server Certificate alone (§7.2).
+- **Lifecycle event**: an event the RA emits to the TL when a registration changes state.
+- **Identity Certificate**: an optional certificate binding the registration's ANSName, issued from the RA's private CA against an operator-submitted CSR.
 
 ## 3. Registration operations and lifecycle
 
 The RA MUST expose the registration, verification, retrieval, listing, revocation, Server Certificate
 renewal, and Identity Certificate rotation operations defined by this specification and the RA API.
+The listing operation is owner-scoped and supports `agentHost` filtering.
 It MUST honor the lifecycle statuses `PENDING_VALIDATION`, `PENDING_DNS`, `ACTIVE`, `DEPRECATED`,
 `REVOKED`, `FAILED`, and `EXPIRED`, and the transitions in §4.4. While certificate issuance is in
 progress, the pending-registration response MUST expose the `PENDING_CERTS` phase; this is not an
@@ -46,8 +44,7 @@ The `agentHost` field is the agent's operational FQDN: ANS-3 (DNS publication) c
 
 Registration is a three-step flow driven by the AHP: the RA accepts the request and returns the domain-control
 challenges (`PENDING_VALIDATION`), verify-acme proves domain control and issues certificates (`PENDING_DNS`),
-and verify-dns confirms the published records and activates the agent (`ACTIVE`). ANS never writes DNS on the
-operator's behalf — every DNS step is the AHP publishing records the RA hands it.
+and verify-dns confirms the published records and activates the agent (`ACTIVE`).
 
 ### 4.1 Step 1 — pending registration
 
@@ -74,8 +71,8 @@ The AHP submits a registration request:
 Pending-stage validations:
 
 1. `agentHost` MUST be a syntactically valid FQDN (RFC 1123).
-2. Each endpoint's `agentUrl` MUST carry `agentHost` as its hostname (case-insensitive). The constraint keeps endpoint URLs reachable through the same TLS certificate that anchors the agent's identity.
-3. Exactly one of `serverCsrPEM` and `serverCertificatePEM` MUST be present (CSR or BYOC, never both, never neither).
+2. Each endpoint's `agentUrl` MUST carry `agentHost` as its hostname (case-insensitive).
+3. Exactly one of `serverCsrPEM` and `serverCertificatePEM` MUST be present.
 4. The endpoint set MUST contain at least one endpoint with valid `protocol` and `agentUrl`, and at most one endpoint per protocol (`DUPLICATE_PROTOCOL`, 422).
 5. `agentDisplayName` and `agentDescription` length limits apply (64 and 150 chars respectively).
 6. The ANSName derived from `version` + `agentHost` MUST be globally unique; a taken name is rejected with `ANS_NAME_TAKEN` (409).
@@ -92,11 +89,9 @@ On a passing gate the RA:
 2. Signs the Identity CSR at the private CA — **only when one was submitted at registration**. A registration without a pending Identity CSR is not an error; the agent advances without an Identity Certificate.
 3. Transitions the registration to `PENDING_DNS`. The verify-acme response is a status body (status, phase, completed/pending steps, timestamps); the AHP fetches the production DNS record set it must publish from the registration detail response while `PENDING_DNS` (content per [ANS-3 §3](ans-3-dns-publication.md)), and the issued certificates from the `GET …/certificates/*` endpoints.
 
-Conformant implementations MUST gate identity-certificate issuance on the presence of a pending Identity CSR, not unconditionally on lifecycle entry.
-
 ### 4.3 Step 3 — verify-dns (activation)
 
-After publishing the production records, the AHP calls `verifyDNS(agentId)`. The RA queries the records live; a DNSSEC-authenticated mismatch blocks activation. TLSA, SVCB, and HTTPS lookups carry the resolver's DNSSEC Authenticated-Data result into the sealed event as `dnsRecordsProvisioned[].dnssecVerified`; TXT lookups do not carry the flag.
+After publishing the production records, the AHP calls `verifyDNS(agentId)`. The RA queries the records live; a DNSSEC-authenticated mismatch blocks activation.
 
 When the records verify, the RA MUST transition the registration to `ACTIVE` and durably commit its
 corresponding `AGENT_REGISTERED` event for delivery as one logical outcome. Failure, restart, or
@@ -139,9 +134,6 @@ reached `ACTIVE`), revoking any already-issued Identity Certificates at the priv
 (`CANNOT_CANCEL`) and lapses to `EXPIRED` on its own; pre-activation expiry likewise emits no TL
 event.
 
-`DEPRECATED` and `FAILED` are defined states (`ACTIVE → DEPRECATED` a valid transition, `FAILED` a
-pending-side terminal), but no RA operation drives either today (§6.3).
-
 TL events fire only on the `ACTIVE` and `REVOKED` transitions. Everything before activation is RA-internal.
 
 ## 5. Identifiers
@@ -155,7 +147,7 @@ TL events fire only on the `ACTIVE` and `REVOKED` transitions. Everything before
 | **`ANSName`** | `ans://v{ver}.{host}` | Derived from `version` + `agentHost` | No | Global | Versioned identifier (see [ANS-2 §2](ans-2-versioned-naming.md)); globally unique per registration |
 | **`ownerId`** | RA-defined | RA from its authentication system | No | Issuing RA | The authenticated principal that owns the registration; scopes reads and lifecycle operations |
 
-The TL wire envelopes carry an optional `providerId` field on agent events, but the agent lane leaves it empty; `providerId` is populated on identity-lane events only ([ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object)). Cross-RA correlation is by `agentHost`: an agent moves between RAs by updating DNS records, not by changing its name.
+The TL wire envelopes carry an optional `providerId` field on agent events, but the agent lane leaves it empty; `providerId` is populated on identity-lane events only ([ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object)).
 
 ## 6. Event set
 
@@ -174,7 +166,7 @@ certificate group, calculated under [§7.3](#73-expiry)), `issuedAt`, `raId`, an
 
 Registrations driven through the V1 paths (`/v1/agents/*`) seal **V1-format** payloads instead: a map-typed
 `dnsRecordsProvisioned` with no `dnssecVerified`, and `validIdentityCerts[]` / `validServerCerts[]`
-rotation arrays (§6.4's "V1 lane stays frozen" covers identity events; the V1 agent lane remains live).
+rotation arrays (the V1 agent lane remains live; identity events have no V1 lane, §6.4).
 
 A worked example payload appears in the [ANS-1 worked examples](examples/ans-1-examples.md).
 
@@ -187,11 +179,9 @@ friendlier short field name `reason`; the sealed event canonicalizes to `revocat
 
 ### 6.3 Reserved event types
 
-`AGENT_RENEWED` and `AGENT_DEPRECATED` are defined in both the V1 and V2 TL event enums, accepted at TL
+`AGENT_RENEWED` and `AGENT_DEPRECATED` are reserved: defined in both TL event enums, accepted at
 ingest, and mapped by the TL's badge and status-token derivations (`AGENT_DEPRECATED` →
-`DEPRECATED`). The reference RA emits neither today: the renewal lifecycle completes without a TL event, and
-no operation drives the `DEPRECATED` transition. The tokens are part of the wire contract and reserved for
-those flows.
+`DEPRECATED`); no operation in this version emits them.
 
 ### 6.4 Identity events (V2)
 
@@ -199,54 +189,34 @@ These events apply only to RAs implementing the optional
 [Verified Identity capability](ans-0-identity-anchor.md#122-optional-capability-verified-identities).
 RAs without that capability emit no identity events.
 
-The Verified-Identity event family — `IDENTITY_VERIFIED`, `IDENTITY_UPDATED`, `IDENTITY_REVOKED`,
-`IDENTITY_LINKED`, `IDENTITY_UNLINKED` — is defined by
-[ANS-0 §8.1](ans-0-identity-anchor.md#81-the-identity-event-family-and-ingest) and sealed on the
-**identity ingest lane** ([ANS-4 §5.3](ans-4-transparency.md#53-identity-surface)), not as part
-of the agent event set above. These events are emitted by the identity API
-(`/v2/ans/identities/*`), carry `SchemaVersion = "V2"`, and are served on the identity's stream.
-Link events are additionally served through each named agent's identity-history endpoint, never
-as events in its lifecycle audit. The V1 agent event lane is unaffected and stays frozen.
-
-A linked agent's badge and optional detail-response `identities[]` MUST reflect the current links
-and visible sealed identity state under
-[ANS-0 §§8.2–8.3](ans-0-identity-anchor.md#82-computed-reads-and-the-visibility-predicate).
-An identity rotation or revocation MUST become visible on every linked agent's current view once
-sealed, while producing exactly one identity event regardless of the number of linked agents.
-Identity operations MUST NOT append events to an agent's lifecycle or audit history, nor the
-reverse. Implementations MAY precompute or cache views only if every response satisfies the same
-visibility and terminal-revocation rules; this introduces no staleness allowance. The list response
-carries no identities field.
+The `IDENTITY_*` family, its ingest lane, and the computed views on agent reads are defined in
+[ANS-0 §8](ans-0-identity-anchor.md#8-transparency-log-surface); identity operations never append
+to an agent's lifecycle or audit history, nor the reverse. The list response carries no identities
+field.
 
 ## 7. Lifecycle operations
 
 | Operation | Trigger | AHP submits | RA processes | RA seals | DNS effect |
 | --- | --- | --- | --- | --- | --- |
 | **Version bump** | Code or config change | A full new registration: new `version`, same `agentHost`, display name, endpoints, and exactly one of server CSR / BYOC (an Identity CSR MAY be included) | The new registration runs the full sequence — fresh domain-control proof, certificate issuance, DNS verification | `AGENT_REGISTERED` (for the new registration) | New per-version records published by the AHP; the prior version's records are untouched |
-| **Renewal (Server Certificate)** | Certificate approaching expiration | A renewal submission (CSR or BYOC) on the renewal routes | Re-proves domain control at renewal verify-acme (DNS-01 TXT or HTTP-01), then finalizes the order and delivers the fresh certificate | Nothing today (`AGENT_RENEWED` reserved — §6.3) | None |
+| **Renewal (Server Certificate)** | Certificate approaching expiration | A renewal submission (CSR or BYOC) on the renewal routes | Re-proves domain control at renewal verify-acme (DNS-01 TXT or HTTP-01), then finalizes the order and delivers the fresh certificate | Nothing (`AGENT_RENEWED` reserved — §6.3) | None |
 | **Identity-certificate rotation** | Key roll on an identity-bearing registration | A fresh `identityCsrPEM` | Issues a new Identity Certificate at the private CA. Additive: the prior certificate remains valid until it expires. No fresh domain-control proof. `ACTIVE` registrations only; a registration created without an Identity CSR is refused (`IDENTITY_CSR_NOT_PERMITTED`, 409) | Nothing | AHP updates any published fingerprint records per ANS-3 |
 | **Revocation** | Agent shutdown or version retirement | `reason` (RFC 5280 reason name token) | Revokes Identity Certificates at the issuing private CA (Server Certificates are not revoked at their issuer) and transitions the registration | `AGENT_REVOKED` | The revocation response lists `dnsRecordsToRemove`; the AHP removes them |
 
-One exception to the renewal re-proof: a CSR renewal whose provider order arrives with no challenges (ACME
-authorization reuse inside the provider's validity window) finalizes directly — the re-proof is the
-provider's cached validation rather than a fresh RA-side check. Re-driven verify-acme calls on an
-already-finalizing order likewise skip the artifact check by design.
+A CSR renewal whose provider order arrives with no challenges (ACME authorization reuse inside the
+provider's validity window) finalizes without a fresh RA-side proof; re-driven verify-acme calls on
+an already-finalizing order likewise skip the artifact check.
 
 ### 7.1 Version coexistence
 
-Uniqueness is on the full ANSName, so `v1.0.0` and `v2.0.0` of the same host are independent
-registrations with independent statuses. During a bump both old and new versions are `ACTIVE`;
-a patch bump may coexist for hours, a major version for months. The RA imposes no retirement
-timeline and treats each version's lifecycle independently; a failed new registration leaves the
-old version untouched.
+Uniqueness is on the full ANSName, so versions of the same host are independent registrations with
+independent statuses ([ANS-2 §2.3](ans-2-versioned-naming.md#23-supersession)); a failed new
+registration leaves the old version untouched.
 
 ### 7.2 Registrations without an Identity Certificate
 
-`identityCsrPEM` is optional. When omitted, the agent registers, activates, and operates on its Server
-Certificate alone: verify-acme succeeds with no identity issuance, renewal covers the Server Certificate
-exactly as for any other registration, and revocation finds no Identity Certificates to revoke. The choice is
-permanent for that registration — the rotation operation refuses agents that registered without an Identity
-CSR (§7 table); the path to an Identity Certificate is a new versioned registration.
+`identityCsrPEM` is optional. A registration created without one operates on its Server Certificate
+alone and cannot add an Identity Certificate later; the path to one is a new versioned registration.
 
 ### 7.3 Expiry
 
@@ -280,16 +250,13 @@ group's expiry remains the latest `notAfter` among all certificates sealed for t
 expired ones.
 
 On a registration whose RA status remains `ACTIVE`, expiry of another required certificate group
-MUST NOT by itself block Server Certificate renewal. Renewal success describes certificate issuance;
-registration validity requires usable certificates in every required group. Renewal and identity-certificate
-rotation seal no TL event under [§6.3](#63-reserved-event-types) and [§7](#7-lifecycle-operations).
-A certificate issued after activation therefore does not update the sealed `AGENT_REGISTERED` evidence
+MUST NOT by itself block Server Certificate renewal.
+A certificate issued after activation does not update the sealed `AGENT_REGISTERED` evidence
 or the `expiresAt` visible to TL consumers.
 
 An older certificate expiring during an overlap period does not expire the registration while each
-required group still has a valid replacement in the sealed evidence. Each certificate remains subject to
-its own validity and revocation checks: the aggregate expiry does not extend an individual certificate's
-validity or make a revoked certificate usable. See the [overlap example](examples/ans-1-examples.md#a4-certificate-expiry-during-overlap).
+required group still has a valid replacement in the sealed evidence. The aggregate expiry does not extend
+an individual certificate's validity or make a revoked certificate usable. See the [overlap example](examples/ans-1-examples.md#a4-certificate-expiry-during-overlap).
 
 Certificate lapse MUST NOT change an `ACTIVE` registration's RA lifecycle status and emits no event;
 the TL derives `WARNING` and `EXPIRED` from the sealed `expiresAt` (ANS-4). A lapsed
@@ -300,55 +267,26 @@ the TL derives `WARNING` and `EXPIRED` from the sealed `expiresAt` (ANS-4). A la
 | Principle | Rule |
 | --- | --- |
 | Agent keys | The RA never generates, handles, or accesses an agent's private keys. Registration intake is CSR- or BYOC-based; the AHP owns its key lifecycle |
-| RA producer keys | Each RA instance MUST have at least one active public key registered with the ANS-4 TL before submitting events. Rotation uses an overlap window: new keys are registered with future `valid_from` dates; both old and new remain active during the transition. Producer private keys never leave the RA instance |
-
-Producer-key expiry and revocation both gate **new** ingest — an expired or revoked key can no longer sign events the TL will accept. Already-sealed events are unaffected: the log is append-only, and verifiers check the TL's own attestations, receipts, and checkpoints against `/root-keys`, not producer keys.
-
-Producer-key rotation procedure:
-
-1. Generate the new producer key pair under the RA's control, subject to the custody rules above.
-2. Register the public key with the TL (`POST /internal/v1/producer-keys`, admin-gated). `valid_from` (set to the rotation cutover time) and `expires_at` are both required, and `valid_from` must precede `expires_at`.
-3. Continue signing with the old key until cutover; the RA's signing identity is its configured `{keyId, raId}` attestation pair.
-4. At cutover, begin signing new events with the new key. The old key remains registered and inside its validity window, so events pending delivery retain signatures that still verify at ingest.
-5. Revoke the old key (`DELETE /internal/v1/producer-keys/{key_id}`) once no in-flight events reference it. Revocation stops the key from authorizing new ingest; previously-sealed events remain verifiable through the TL's own attestations and receipts.
+| RA producer keys | Each RA instance MUST have at least one active public key registered with the ANS-4 TL before submitting events. Rotation uses an overlap window: new keys are registered with future `valid_from` dates; both old and new remain active during the transition. Producer private keys never leave the RA instance. Registration, rotation, and revocation follow [ANS-4 §6](ans-4-transparency.md#6-producer-authentication) |
 
 ## 9. Conformance
 
-A conformant ANS-1 implementation:
-
-1. Exposes the operations in §3; registration accepts the request in §4.1 and returns the pending registration with its domain-control challenges.
-2. Verifies domain control before certificate issuance on every registration and renewal — the challenge gate is unconditional, except a renewal order that arrives challenge-free under ACME authorization reuse (§7).
-3. Gates Identity Certificate issuance on the presence of a pending Identity CSR (the verify-acme rule, §4.2), never unconditionally on lifecycle entry.
-4. Enforces global ANSName uniqueness at registration (`ANS_NAME_TAKEN`, 409).
-5. Never generates, holds, or accesses an agent's private keys, and reports already-proven public keys only from the authoritative sealed state, subject to visibility and revocation rules ([ANS-0 §4](ans-0-identity-anchor.md#4-the-verified-identity-object)).
-6. Emits `AGENT_REGISTERED` at activation and `AGENT_REVOKED` at revocation to the ANS-4 TL, constructing and signing each event payload once and replaying the exact bytes and signature on retry.
-7. Honors the lifecycle state machine (§4.4) and produces TL events only on the `ACTIVE` and `REVOKED` transitions.
-8. Exposes an owner-scoped listing operation that supports `agentHost` filtering.
+A conformant ANS-1 implementation implements §§3–8.
 
 ## 10. Security considerations
 
 ### 10.1 Reputation continuity and operator changes
 
-When a domain transfers ownership, the FQDN persists but the operator does not. Reputation accumulated under
-the old operator must not silently transfer to the new one. The registration model bounds the exposure through
-re-proof: domain control is re-proven at every renewal and every new version registration (the challenge gate
-is unconditional, subject to the ACME authorization-reuse window noted in §7), so a party that no longer
-controls the domain cannot renew or extend the registration. A
-failed re-proof fails that renewal — the registration is not auto-revoked — and the certificates lapse on
-their own schedule, surfacing as the TL's current `WARNING`/`EXPIRED` derivation. Revoking a live
-registration is an operator or RA action (`AGENT_REVOKED`); downstream consumers evaluate staleness from the
-sealed event timestamps.
+Domain control is re-proven at every renewal and every new version registration (§4.2, §7), so a
+party that no longer controls the domain cannot extend the registration. A failed re-proof fails
+that renewal; the registration is not auto-revoked and its certificates lapse on their own
+schedule, surfacing as the TL's `WARNING`/`EXPIRED` derivation.
 
 ### 10.2 Failure modes
 
-| Scenario | Consequence | RA response |
-| --- | --- | --- |
-| AHP unavailable for extended period | Certificates expire; TLS fails | The RA cannot auto-renew (the AHP owns its private keys). RA state is unchanged; the TL derives the current `WARNING` or `EXPIRED` status from the sealed `expiresAt` |
-| TL unavailable | Agent-lane event delivery is deferred | Agent-lane events remain durably pending and are retried byte-for-byte until accepted by the TL, subject to producer-key validity and revocation. Local activation may complete with delivery pending under §4.3. Identity-lane writes (ANS-0) instead fail closed with `TL_UNAVAILABLE` |
-
-## Appendix A: Worked examples (non-normative)
-
-Non-normative worked examples (registration request, event payloads) live at [`examples/ans-1-examples.md`](examples/ans-1-examples.md).
+When the TL is unavailable, agent-lane events remain durably pending and are retried byte-for-byte
+(§4.3); identity-lane writes instead fail closed with `TL_UNAVAILABLE`
+([ANS-0 §5.1](ans-0-identity-anchor.md#51-seal-before-success-normative)).
 
 ## References
 
@@ -361,6 +299,5 @@ Non-normative worked examples (registration request, event payloads) live at [`e
 - [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339): Timestamp representation and ordering.
 - [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280): X.509 (certificate validity and revocation reason codes).
 - [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515): JWS (signature envelope).
-- [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517): JWK (JSON Web Key).
 - [RFC 8555](https://www.rfc-editor.org/rfc/rfc8555): ACME (FQDN domain-control proof).
 - [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785): JCS canonicalization.

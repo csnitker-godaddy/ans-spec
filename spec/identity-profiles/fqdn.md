@@ -16,11 +16,8 @@ Verified Identity and is not registered through `/v2/ans/identities`.
 - **Form**: a DNS hostname — the agent's `agentHost` (e.g. `agent.example.com`).
 - **Canonicalization**: lowercase; IDNA/punycode A-label form; no trailing dot. The version
   prefix (`v1.0.0.`) lives only in the ANS-name hostname label, never in the bare FQDN.
-- **Selection**: not lexical and not a kind a client registers through the identity API. The FQDN
-  is established by the agent registration itself (ANS-1). A registration loaded without explicit
-  anchor metadata is **FQDN-implicit**: its primary anchor is `agentHost`, proven through this
-  profile (ANS-0 §9). FQDN-primacy is policy (`a registration's primary anchor MUST be fqdn`),
-  not a structural limit on the gate.
+- **Selection**: established by the agent registration itself (ANS-1), not through the identity
+  API.
 
 ## 2. Control proof — both axes
 
@@ -33,17 +30,14 @@ this profile only states how it maps onto the gate. Checks, in order:
 
 1. **Identifier control (ACME DNS-01).** The registrant provisions the `_acme-challenge.<host>`
    TXT record the ACME order names, and the CA validates control of the FQDN. This is the
-   *location challenge* of [ANS-0 §3.3](../ans-0-identity-anchor.md#33-identifier-control-the-location-challenge)
-   — the single live instance of an identifier-control round-trip in this version.
+   *location challenge* of [ANS-0 §3.3](../ans-0-identity-anchor.md#33-identifier-control-the-location-challenge).
 2. **Key control (CSR self-signature).** The registrant submits a PKCS#10 CSR; its
    self-signature proves possession of the private key. The CA binds that key to the FQDN by
-   issuing the certificate. Key trust derives entirely from the ACME binding — the key arrives in
-   the CSR but is trusted only because step 1 proved the domain (ANS-0 §3.2, "the apparent
-   exception that proves the rule").
+   issuing the certificate.
 
 Both axes clean → the agent's primary anchor is proven; the registration may activate
 (seal-before-success, ANS-1 §4.2). No `IdentityProofInput`/JWS round-trip applies here — the
-cert binding *is* the proof. `fqdn` is therefore cert-bound, not challenge-signature-bound.
+cert binding *is* the proof.
 
 ## 3. Key source and selection
 
@@ -61,23 +55,19 @@ sealed as an `IDENTITY_*` event and never appears on the identity read surface.
 
 ## 5. Freshness and monitoring
 
-Freshness is the certificate lifetime plus the renewal lifecycle (ANS-3). ANS-5 monitors the
-agent's served TLS material and DNS state against the sealed attestation; the FQDN's continuity
-is the certificate chain, not a re-proof cadence.
+Freshness is the certificate lifetime plus renewal ([ANS-1 §7](../ans-1-registration.md#7-lifecycle-operations));
+ANS-5 monitors the served TLS material and DNS state against the sealed attestation.
 
 ## 6. Lifecycle specifics
 
 Rotation, renewal, and revocation of the primary anchor are the **agent** lifecycle
-([ANS-1 §7](../ans-1-registration.md#7-lifecycle-operations); DNS effects per ANS-3). When the
-FQDN lapses (registration revoked), the **who** survives independently: a linked
-Verified Identity and its TL history persist, and the owner links the existing identity to a
-successor agent (ANS-0 §9, domain-loss continuity).
+([ANS-1 §7](../ans-1-registration.md#7-lifecycle-operations); DNS effects per ANS-3). A linked
+Verified Identity survives the agent's revocation (ANS-0 §9).
 
 ## 7. Outbound-fetch safety
 
-The verification I/O is DNS (DNS-01) and ACME HTTP to the configured CA, governed by ANS-2's DNS
-verifier and the ACME client — not the registrant-steered fetch path of the did fetch profiles.
-No `did:web`-style SSRF surface applies.
+The verification I/O is DNS (DNS-01) and ACME HTTP to the configured CA; no registrant-steered
+fetch applies.
 
 ## 8. Error codes
 
@@ -88,18 +78,15 @@ ANS-3. This profile defines no `IDENTITY_*`-surface codes of its own.
 
 ## 9. Status and requirement
 
-**Requirement: Required.** `fqdn` is the agent's primary anchor (the *what*) — every agent
-registration is anchored to one, proven on the ANS-1 path. It is required independent of whether
-the RA implements the optional Verified Identity surface ([ANS-0 §12](../ans-0-identity-anchor.md#12-conformance)).
+**Requirement: Required.** Every agent registration is anchored to one FQDN, proven on the ANS-1 path.
 
 **Status: Active.** This is the original, fully-implemented anchor path; the identity gate
-generalizes it. It needs no promotion — the rest of the registry catches up to it.
+generalizes it.
 
 ## 10. Object schemas
 
-`fqdn` seals no `IDENTITY_*` event and has no Verified-Identity object (the *what*, not the *who*).
-Its sealed object is the agent's **`AGENT_REGISTERED` attestation** — `identityCerts[]`,
-`serverCerts[]`, `dnsRecordsProvisioned[]` — documented in
-[ANS-1 §6.1](../ans-1-registration.md#61-agent_registered). The identity-event conformance schema
+`fqdn` seals through the agent event family: its sealed object is the `AGENT_REGISTERED`
+attestation — `identityCerts[]`, `serverCerts[]`, `dnsRecordsProvisioned[]` —
+([ANS-1 §6.1](../ans-1-registration.md#61-agent_registered)). The identity-event conformance schema
 [`api/identity-event-schema-v2.json`](../../api/identity-event-schema-v2.json) does **not** apply
-to the primary anchor; the agent event schema governs it.
+to the primary anchor.

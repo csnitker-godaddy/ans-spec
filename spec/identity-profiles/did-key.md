@@ -8,8 +8,7 @@ Date: 2026-06-23
 Audience: implementers building an ANS-conformant Registration Authority
 
 A `did:key` identity proves control of a key that **is** the identifier — the public key is
-decoded directly from the DID string, with zero I/O. Key-control axis only; the simplest instance
-of the gate, and the reference shape for any future kind whose key material is self-contained.
+decoded directly from the DID string, with zero I/O. Key-control axis only.
 
 ## 1. Identifier form, canonicalization, selection
 
@@ -61,9 +60,7 @@ identifier — nothing derived or re-encoded beyond the method's own determinist
 
 ## 5. Freshness and monitoring
 
-The key is the identifier, so it cannot rotate under a stable identifier and cannot "drift" — a
-`did:key` never changes its published key. ANS-5 monitoring is therefore trivial: the only state
-transition is revocation. There is no document to re-resolve.
+The key is the identifier and cannot drift; the only monitored transition is revocation.
 
 ## 6. Lifecycle specifics
 
@@ -86,17 +83,15 @@ None — `did:key` performs no network I/O at any phase. There is no SSRF surfac
 
 ## 9. Status and requirement
 
-**Requirement: Optional.** A who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)):
-optional to support; mandatory in execution once enabled.
+**Requirement: Optional** ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)).
 
 **Status: Active.** Implemented, tested, sealing real proofs with zero I/O.
 
 ## 10. Object schemas (worked example)
 
-Concrete shapes for conformance fixtures. The sealed event validates against the machine schema
+Conformance fixtures: the sealed event validates against
 [`api/identity-event-schema-v2.json`](../../api/identity-event-schema-v2.json); request/response
-shapes are in [`api/api-spec-v2.yaml`](../../api/api-spec-v2.yaml). `did:key` is single-key, so
-the challenge round names exactly one `kid` and `verify-control` carries exactly one proof.
+shapes are in [`api/api-spec-v2.yaml`](../../api/api-spec-v2.yaml).
 
 **Register** — `POST /v2/ans/identities`:
 

@@ -11,7 +11,7 @@ Audience: implementers evaluating future identifier kinds
 > external plumbing are real — until then the kind is unregistered and returns
 > `IDENTIFIER_KIND_UNSUPPORTED` (the 404-is-the-signal rule, ANS-0 §10.1). No placeholder seal.
 
-**Requirement: Optional** — a who-identity profile ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)), like every who-profile.
+**Requirement: Optional** ([ANS-0 §12.2](../ans-0-identity-anchor.md#122-optional-capability-verified-identities)).
 
 `did:plc` is AT Protocol's self-authenticating, directory-resolved DID method. It fits the
 existing JWS-scheme, multi-key, fetch-based pattern almost exactly — the same shape as
@@ -30,9 +30,3 @@ existing JWS-scheme, multi-key, fetch-based pattern almost exactly — the same 
   and the PLC operation log's tamper-evidence (a did:plc audit log is itself append-only).
 - **SSRF**: directory fetch is registrant-influenced (the directory host is fixed, but a
   self-hosted PLC mirror is steerable) → same egress rules as did:web.
-- **What gates promotion**: a PLC resolver (directory + log verification), tests, and the
-  directory egress path meeting ANS-0 §13.
-
-Open question to resolve before promotion: whether to validate the full PLC operation-log chain
-(rotation-key provenance) or trust the directory's resolved state — the former is stronger and
-matches the proof-of-control posture; the latter is a directory-trust shortcut.
